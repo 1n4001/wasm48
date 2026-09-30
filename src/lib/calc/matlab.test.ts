@@ -111,6 +111,26 @@ describe("matlab wasm", () => {
     assert.equal(num("quantile([1 2 3 4], 0.5)"), 2.5);
   });
 
+  it("defines functions and differentiates them", () => {
+    const scope = new Map<string, Val>();
+    const defined = runScript("f(t) = 1/2*9.8*t^2+2*t+3", scope, engine);
+    assert.equal(defined.ok, true);
+    assert.equal(scope.get("f")?.t, "fn");
+    const at = runScript("f(1)", scope, engine);
+    assert.equal(at.ok, true);
+    if (at.ok && at.pushed[0]?.t === "s") assert.ok(Math.abs(at.pushed[0].v - 9.9) < 1e-9);
+    const slope = runScript("f'(1)", scope, engine);
+    assert.equal(slope.ok, true);
+    if (slope.ok && slope.pushed[0]?.t === "s") assert.ok(Math.abs(slope.pushed[0].v - 11.8) < 1e-9);
+    const formula = runScript("f'(t)", scope, engine);
+    assert.equal(formula.ok, true);
+    if (formula.ok) assert.equal(formula.pushed[0]?.t, "sym");
+    runScript("g(x) = f(x)+1", scope, engine);
+    const composed = runScript("g(1)", scope, engine);
+    assert.equal(composed.ok, true);
+    if (composed.ok && composed.pushed[0]?.t === "s") assert.ok(Math.abs(composed.pushed[0].v - 10.9) < 1e-9);
+  });
+
   it("reports syntax and size errors", () => {
     const bad = runScript("2 +", new Map(), engine);
     assert.equal(bad.ok, false);

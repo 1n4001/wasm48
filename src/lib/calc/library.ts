@@ -632,6 +632,8 @@ export const FUNCTIONS: FunctionRow[] = [
   { group: "Linear algebra", name: "size", args: "A", about: "Row count and column count.", example: "size([1 2; 3 4])" },
   { group: "Calculus", name: "diff", args: "f, x", about: "Symbolic derivative. diff(f, x, a) evaluates it.", example: "diff(x^2, x)" },
   { group: "Calculus", name: "integ", args: "f, x, a, b", about: "Definite integral from a to b.", example: "integ(sin(x), x, 0, pi)" },
+  { group: "Functions", name: "f(x) =", args: "expr", about: "Define f. Call f(2). f'(x) is the derivative. Functions can call functions.", example: "f(t) = 1/2*9.8*t^2+2*t+3" },
+  { group: "Stack", name: "stk", args: "n", about: "Stack level n, as shown on the left. 1 is the newest.", example: "stk(1)+1" },
   { group: "Graphs", name: "plot", args: "f, x, a, b", about: "Graph y = f(x) from a to b.", example: "plot(sin(x), x, 0, 2*pi)" },
   { group: "Graphs", name: "surf", args: "f, x, a, b, y, c, d", about: "Surface z = f(x, y).", example: "surf(x^2-y^2, x, -2, 2, y, -2, 2)" },
 ];

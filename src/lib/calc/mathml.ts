@@ -40,6 +40,14 @@ function render(e: Expr): Piece {
         atom: "other",
       };
     case "call":
+      if (e.prime) {
+        const inner = e.args.map((arg) => render(arg).xml).join("<mo>,</mo>");
+        return {
+          xml: `<mrow><msup>${renderName(e.name).xml}<mo>′</mo></msup><mo>(</mo>${inner}<mo>)</mo></mrow>`,
+          prec: 6,
+          atom: "other",
+        };
+      }
       return renderCall(e.name.toLowerCase(), e.args);
     case "bin":
       return renderBin(e.op, e.a, e.b);

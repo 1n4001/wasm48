@@ -16,7 +16,7 @@ export type Expr =
   | { k: "unary"; op: "-"; a: Expr }
   | { k: "bin"; op: string; a: Expr; b: Expr }
   | { k: "trans"; a: Expr }
-  | { k: "call"; name: string; args: Expr[] }
+  | { k: "call"; name: string; args: Expr[]; prime?: boolean }
   | { k: "mat"; rows: Expr[][] }
   | { k: "colon"; a: Expr; step: Expr | null; b: Expr };
 
@@ -28,7 +28,7 @@ type Tok =
   | { t: "nl" }
   | { t: "eof" };
 
-type Stmt = { assign: string | null; expr: Expr; silent: boolean };
+type Stmt = { assign: string | null; params: string[] | null; expr: Expr; silent: boolean };
 
 const SINGLES = new Set(["+", "-", "*", "/", "\\", "^", "(", ")", "[", "]", ";", ",", "'", "=", ":"]);
 
@@ -133,13 +133,43 @@ class Parser {
   }
 
   private parseStmt(): Stmt {
+    const fn = this.tryFnAssign();
+    if (fn) return fn;
+    return { assign: null, params: null, expr: this.parseExpr(false), silent: false };
+  }
+
+  private tryFnAssign(): Stmt | null {
+    const start = this.i;
     const p = this.peek();
-    const n = this.toks[this.i + 1];
-    if (p.t === "id" && n?.t === "op" && n.s === "=") {
+    if (p.t !== "id") return null;
+    const name = p.s;
+    const next = this.toks[this.i + 1];
+    if (next?.t === "op" && next.s === "=") {
       this.i += 2;
-      return { assign: p.s, expr: this.parseExpr(false), silent: false };
+      return { assign: name, params: null, expr: this.parseExpr(false), silent: false };
     }
-    return { assign: null, expr: this.parseExpr(false), silent: false };
+    if (!(next?.t === "op" && next.s === "(")) return null;
+    this.i += 2;
+    const params: string[] = [];
+    if (!(this.peek().t === "op" && (this.peek() as { s: string }).s === ")")) {
+      while (true) {
+        const id = this.peek();
+        if (id.t !== "id") {
+          this.i = start;
+          return null;
+        }
+        params.push(id.s);
+        this.i++;
+        if (this.eat("op", ",")) continue;
+        break;
+      }
+    }
+    if (!this.eat("op", ")") || !this.eat("op", "=")) {
+      this.i = start;
+      return null;
+    }
+    if (new Set(params).size !== params.length) throw new MatlabError("Repeated Parameter");
+    return { assign: name, params, expr: this.parseExpr(false), silent: false };
   }
 
   private parseExpr(matrix: boolean): Expr {
@@ -250,6 +280,14 @@ class Parser {
     }
     if (p.t === "id") {
       this.i++;
+      const name = p.s;
+      let prime = false;
+      const mark = this.peek();
+      const after = this.toks[this.i + 1];
+      if (mark.t === "op" && mark.s === "'" && after?.t === "op" && after.s === "(") {
+        prime = true;
+        this.i++;
+      }
       if (this.peek().t === "op" && (this.peek() as { s: string }).s === "(") {
         this.i++;
         const args: Expr[] = [];
@@ -266,9 +304,9 @@ class Parser {
           }
         }
         if (!this.eat("op", ")")) throw new MatlabError("Syntax Error");
-        return { k: "call", name: p.s, args };
+        return prime ? { k: "call", name, args, prime } : { k: "call", name, args };
       }
-      return { k: "name", s: p.s };
+      return { k: "name", s: name };
     }
     if (p.t === "op" && p.s === "(") {
       this.i++;
@@ -449,6 +487,7 @@ class Compiler {
         const v = getVar(this.scope, e.s);
         if (!v) this.fail(`Undefined Name '${e.s}'`);
         if (v.t === "sym") this.fail("Symbolic");
+        if (v.t === "fn") this.fail(`Call ${e.s}(...)`);
         return this.slotFromVal(v);
       }
       case "unary": {
@@ -1011,6 +1050,7 @@ class Compiler {
       this.storeScalar(dest + 8, a.c);
       return { ptr: dest, r: 1, c: 2 };
     }
+    if (id === "stk") this.fail("Bad Level");
     this.fail(`Undefined Function '${name}'`);
   }
 
@@ -1180,6 +1220,155 @@ export function parseDisplay(src: string): Expr | null {
   }
 }
 
+function parseOne(src: string): Expr {
+  const stmts = new Parser(lex(src)).parseScript();
+  const stmt = stmts[0];
+  if (stmts.length !== 1 || !stmt || stmt.assign || stmt.params) throw new MatlabError("Syntax Error");
+  return stmt.expr;
+}
+
+function freezeArg(arg: Expr, scope: Map<string, Val>): Expr {
+  try {
+    const n = fold(arg, scope);
+    if (Number.isFinite(n)) return { k: "num", v: n };
+  } catch {
+    /* keep a symbolic argument */
+  }
+  return arg;
+}
+
+function lookupFn(scope: Map<string, Val>, name: string): Extract<Val, { t: "fn" }> | undefined {
+  const value = scope.get(name);
+  return value?.t === "fn" ? value : undefined;
+}
+
+function substitute(expr: Expr, name: string, value: Expr): Expr {
+  switch (expr.k) {
+    case "num":
+      return expr;
+    case "name":
+      return expr.s === name ? value : expr;
+    case "unary":
+      return { k: "unary", op: "-", a: substitute(expr.a, name, value) };
+    case "bin":
+      return { k: "bin", op: expr.op, a: substitute(expr.a, name, value), b: substitute(expr.b, name, value) };
+    case "trans":
+      return { k: "trans", a: substitute(expr.a, name, value) };
+    case "call":
+      return {
+        k: "call",
+        name: expr.name,
+        args: expr.args.map((arg) => substitute(arg, name, value)),
+        prime: expr.prime,
+      };
+    case "mat":
+      return { k: "mat", rows: expr.rows.map((row) => row.map((cell) => substitute(cell, name, value))) };
+    case "colon":
+      return {
+        k: "colon",
+        a: substitute(expr.a, name, value),
+        step: expr.step ? substitute(expr.step, name, value) : null,
+        b: substitute(expr.b, name, value),
+      };
+    default:
+      return expr;
+  }
+}
+
+function usesUserFn(expr: Expr, scope: Map<string, Val>): boolean {
+  switch (expr.k) {
+    case "num":
+    case "name":
+      return false;
+    case "unary":
+    case "trans":
+      return usesUserFn(expr.a, scope);
+    case "bin":
+      return usesUserFn(expr.a, scope) || usesUserFn(expr.b, scope);
+    case "colon":
+      return usesUserFn(expr.a, scope) || (!!expr.step && usesUserFn(expr.step, scope)) || usesUserFn(expr.b, scope);
+    case "mat":
+      return expr.rows.some((row) => row.some((cell) => usesUserFn(cell, scope)));
+    case "call":
+      return !!expr.prime || !!lookupFn(scope, expr.name) || expr.args.some((arg) => usesUserFn(arg, scope));
+    default:
+      return false;
+  }
+}
+
+function expandCalls(expr: Expr, scope: Map<string, Val>, stack = new Set<string>()): Expr {
+  switch (expr.k) {
+    case "num":
+    case "name":
+      return expr;
+    case "unary":
+      return { k: "unary", op: "-", a: expandCalls(expr.a, scope, stack) };
+    case "bin":
+      return { k: "bin", op: expr.op, a: expandCalls(expr.a, scope, stack), b: expandCalls(expr.b, scope, stack) };
+    case "trans":
+      return { k: "trans", a: expandCalls(expr.a, scope, stack) };
+    case "colon":
+      return {
+        k: "colon",
+        a: expandCalls(expr.a, scope, stack),
+        step: expr.step ? expandCalls(expr.step, scope, stack) : null,
+        b: expandCalls(expr.b, scope, stack),
+      };
+    case "mat":
+      return { k: "mat", rows: expr.rows.map((row) => row.map((cell) => expandCalls(cell, scope, stack))) };
+    case "call": {
+      const args = expr.args.map((arg) => freezeArg(expandCalls(arg, scope, stack), scope));
+      const fn = lookupFn(scope, expr.name);
+      if (!fn) {
+        if (expr.prime) throw new MatlabError(`Undefined Function '${expr.name}'`);
+        return { k: "call", name: expr.name, args, prime: expr.prime };
+      }
+      if (stack.has(expr.name)) throw new MatlabError("Recursive Function");
+      const next = new Set(stack);
+      next.add(expr.name);
+      let body = expandCalls(parseOne(fn.body), scope, next);
+      if (expr.prime) {
+        if (fn.params.length !== 1 || args.length !== 1) throw new MatlabError("Need one variable");
+        try {
+          body = derivative(body, fn.params[0]!);
+        } catch (err) {
+          throw new MatlabError(err instanceof Error ? err.message : "Cannot differentiate");
+        }
+        return substitute(body, fn.params[0]!, args[0]!);
+      }
+      if (args.length !== fn.params.length) throw new MatlabError(args.length < fn.params.length ? "Too Few Arguments" : "Too Many Arguments");
+      fn.params.forEach((param, index) => {
+        body = substitute(body, param, args[index]!);
+      });
+      return body;
+    }
+    default:
+      return expr;
+  }
+}
+
+function hasFree(expr: Expr, scope: Map<string, Val>): boolean {
+  switch (expr.k) {
+    case "num":
+      return false;
+    case "name":
+      return !scope.has(expr.s) && CONSTANTS[expr.s] === undefined;
+    case "unary":
+    case "trans":
+      return hasFree(expr.a, scope);
+    case "bin":
+      return hasFree(expr.a, scope) || hasFree(expr.b, scope);
+    case "colon":
+      return hasFree(expr.a, scope) || (!!expr.step && hasFree(expr.step, scope)) || hasFree(expr.b, scope);
+    case "mat":
+      return expr.rows.some((row) => row.some((cell) => hasFree(cell, scope)));
+    case "call":
+      return expr.args.some((arg) => hasFree(arg, scope));
+    default:
+      return false;
+  }
+}
+
 export function runScript(src: string, scope: Map<string, Val>, engine: Engine): ScriptResult {
   let stmts: Stmt[];
   try {
@@ -1196,7 +1385,15 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
   let bytes: Uint8Array<ArrayBufferLike> = new Uint8Array();
   try {
     for (const stmt of stmts) {
-      const calc = calculusStmt(stmt.expr, scope);
+      if (stmt.params && stmt.assign) {
+        const fn: Val = { t: "fn", params: stmt.params, body: exprText(stmt.expr) };
+        scope.set(stmt.assign, fn);
+        if (!stmt.silent) printed.push({ name: stmt.assign, value: fn });
+        continue;
+      }
+      const user = usesUserFn(stmt.expr, scope);
+      const expr = expandCalls(stmt.expr, scope);
+      const calc = calculusStmt(expr, scope);
       if (calc) {
         if (calc.plot) plot = calc.plot;
         if (calc.value) {
@@ -1206,14 +1403,27 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
             if (!stmt.silent) {
               printed.push({ name: stmt.assign ?? "ans", value: calc.value });
               pushed.push(calc.value);
-              pushedExpr.push(exprText(stmt.expr));
+              pushedExpr.push(exprText(expr));
             }
           }
         }
         continue;
       }
+      if (user && hasFree(expr, scope)) {
+        const value: Val = { t: "sym", text: exprText(expr) };
+        if (stmt.assign) {
+          scope.set(stmt.assign, value);
+          if (!stmt.silent) printed.push({ name: stmt.assign, value });
+        } else if (!stmt.silent) {
+          scope.set("ans", value);
+          printed.push({ name: "ans", value });
+          pushed.push(value);
+          pushedExpr.push(exprText(expr));
+        }
+        continue;
+      }
       engine.resetArena();
-      const compiled = new Compiler(engine, scope).finish(stmt.expr);
+      const compiled = new Compiler(engine, scope).finish(expr);
       const value = cloneVal(execute(compiled.bytes, engine, compiled.slot));
       listings.push(compiled.listing);
       bytes = compiled.bytes;
@@ -1225,7 +1435,7 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
         if (!stmt.silent) {
           printed.push({ name: "ans", value });
           pushed.push(value);
-          pushedExpr.push(exprText(stmt.expr));
+          pushedExpr.push(exprText(expr));
         }
       }
     }
@@ -1248,7 +1458,7 @@ function exprText(e: Expr): string {
     case "trans":
       return `${exprAtom(exprText(e.a))}'`;
     case "call":
-      return `${e.name}(${e.args.map(exprText).join(",")})`;
+      return `${e.name}${e.prime ? "'" : ""}(${e.args.map(exprText).join(",")})`;
     case "mat":
       return `[${e.rows.map((row) => row.map(exprText).join(" ")).join("; ")}]`;
     case "colon":
@@ -1340,6 +1550,10 @@ export const EXAMPLES: { name: string; source: string }[] = [
   {
     name: "saddle",
     source: "surf(x^2 - y^2, x, -2, 2, y, -2, 2)",
+  },
+  {
+    name: "f(t)",
+    source: "f(t) = 1/2*9.8*t^2+2*t+3\nf'(t)\nf(1)",
   },
 ];
 

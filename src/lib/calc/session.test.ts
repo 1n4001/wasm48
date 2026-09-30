@@ -78,6 +78,38 @@ describe("rpn session", () => {
     assert.equal(session.face().plot?.kind, "xyz");
   });
 
+  it("addresses the stack and copies a script form", () => {
+    const session = bootSession();
+    assert.equal(session.runSource("1+2"), true);
+    assert.equal(session.runSource("stk(1)+1"), true);
+    const top = session.face().levels.at(-1);
+    assert.equal(top?.text, "4");
+    assert.equal(top?.expr, "1+2+1");
+    assert.equal(session.levelScript(1), "1+2+1");
+    assert.equal(session.runSource("stk(9)"), false);
+    assert.equal(session.face().message, "Bad Level");
+  });
+
+  it("defines a function, its derivative, and a composition", () => {
+    const session = bootSession();
+    session.runSource("f(t) = t^2");
+    session.runSource("g(x) = f(x)+1");
+    session.runSource("g(3)");
+    const value = session.stack.at(-1);
+    assert.equal(value?.t, "s");
+    if (value?.t === "s") assert.equal(value.v, 10);
+    session.runSource("f'(t)");
+    const deriv = session.stack.at(-1);
+    assert.equal(deriv?.t, "sym");
+    if (deriv?.t === "sym") assert.equal(deriv.text, "2*t");
+    session.runSource("f'(4)");
+    const at = session.stack.at(-1);
+    assert.equal(at?.t, "s");
+    if (at?.t === "s") assert.equal(at.v, 8);
+    const shown = session.face().vars.find((row) => row.name.startsWith("f"));
+    assert.equal(shown?.name, "f(t)");
+  });
+
   it("multiplies matrices through the command line", () => {
     const session = bootSession();
     for (const ch of "[1 2; 3 4]*[5 6; 7 8]") {

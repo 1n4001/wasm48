@@ -1,5 +1,5 @@
 import { type Engine, type Val, cloneVal, createEngine } from "./engine.ts";
-import { formatMath, formatShort, formatVal } from "./format.ts";
+import { formatMath, formatShort, formatVal, scriptForm } from "./format.ts";
 import { EXAMPLES, FUNCTIONS, runScript } from "./matlab.ts";
 import type { PlotSpec } from "./matlab.ts";
 
@@ -237,7 +237,10 @@ export class Session {
         : ["A", "B", "C", "D", "E", "F"];
     const vars = [...this.scope.entries()]
       .filter(([name]) => name !== "ans")
-      .map(([name, value]) => ({ name, text: formatMath(value) }));
+      .map(([name, value]) => ({
+        name: value.t === "fn" ? `${name}(${value.params.join(", ")})` : name,
+        text: formatMath(value),
+      }));
     return {
       levels,
       matrix,
@@ -316,10 +319,21 @@ export class Session {
     this.emit();
   }
 
-  runSource(src: string) {
+  runSource(src: string): boolean {
     this.message = null;
-    this.execSource(src, true);
+    const ok = this.execSource(src, true);
     this.emit();
+    return ok;
+  }
+
+  notify(message: string) {
+    this.message = message;
+    this.emit();
+  }
+
+  levelScript(level: number): string {
+    const value = this.stack[this.stack.length - level];
+    return value ? scriptForm(this.exprOf(value)) : "";
   }
 
   restore() {
@@ -683,8 +697,15 @@ export class Session {
   private execSource(src: string, push: boolean): boolean {
     const trimmed = src.trim();
     if (!trimmed) return true;
+    let expanded = trimmed;
+    try {
+      expanded = this.expandStack(trimmed);
+    } catch {
+      this.message = "Bad Level";
+      return false;
+    }
     this.checkpoint();
-    const result = runScript(trimmed, this.scope, this.engine);
+    const result = runScript(expanded, this.scope, this.engine);
     if (!result.ok) {
       this.revert();
       this.message = result.error;
@@ -704,6 +725,15 @@ export class Session {
       });
     }
     return true;
+  }
+
+  private expandStack(src: string): string {
+    return src.replace(/\bstk\(\s*(\d+)\s*\)/gi, (_full, raw: string) => {
+      const level = Number(raw);
+      const value = this.stack[this.stack.length - level];
+      if (!Number.isInteger(level) || level < 1 || !value) throw new Error("bad");
+      return `(${scriptForm(this.exprOf(value))})`;
+    });
   }
 
   private note(listing: string, bytes: Uint8Array<ArrayBufferLike>) {
@@ -767,17 +797,20 @@ export class Session {
 type Serialized =
   | { t: "s"; v: number }
   | { t: "m"; r: number; c: number; d: number[] }
-  | { t: "sym"; text: string };
+  | { t: "sym"; text: string }
+  | { t: "fn"; params: string[]; body: string };
 
 function dehydrate(v: Val): Serialized {
   if (v.t === "s") return { t: "s", v: v.v };
   if (v.t === "sym") return { t: "sym", text: v.text };
+  if (v.t === "fn") return { t: "fn", params: v.params, body: v.body };
   return { t: "m", r: v.r, c: v.c, d: [...v.d] };
 }
 
 function hydrate(v: Serialized): Val {
   if (v.t === "s") return { t: "s", v: v.v };
   if (v.t === "sym") return { t: "sym", text: v.text };
+  if (v.t === "fn") return { t: "fn", params: v.params, body: v.body };
   return { t: "m", r: v.r, c: v.c, d: new Float64Array(v.d) };
 }
 

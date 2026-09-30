@@ -145,7 +145,20 @@ export function Calculator() {
                 {face.levels.map((row) => (
                   <div key={row.level}>
                     <div className="text-left">
-                      <span className="text-lcd-dim">{row.level}: </span>
+                      <button
+                        type="button"
+                        className="text-lcd-dim"
+                        title="Copy script"
+                        onClick={() => {
+                          const text = sessionRef.current?.levelScript(row.level) ?? row.expr;
+                          void navigator.clipboard.writeText(text).then(
+                            () => sessionRef.current?.notify("Copied"),
+                            () => sessionRef.current?.notify("Copy failed"),
+                          );
+                        }}
+                      >
+                        {row.level}:
+                      </button>{" "}
                       <MathView source={row.expr} />
                     </div>
                     <div className="flex justify-end">
@@ -212,8 +225,14 @@ export function Calculator() {
           <textarea
             value={source}
             onChange={(event) => setSource(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey)) return;
+              event.preventDefault();
+              if (sessionRef.current?.runSource(source)) setSource("");
+            }}
             spellCheck={false}
             aria-label="MATLAB script"
+            title="Ctrl+Enter compiles, pushes, and clears"
             className="min-h-40 w-full resize-y bg-body p-3 font-mono text-sm leading-relaxed text-ink outline-none"
           />
           <div className="flex flex-wrap gap-2">
