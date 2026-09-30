@@ -1,0 +1,735 @@
+import { type Engine, type Val, cloneVal, createEngine } from "./engine.ts";
+import { formatShort, formatVal } from "./format.ts";
+import { EXAMPLES, runScript } from "./matlab.ts";
+
+export { EXAMPLES };
+
+type MenuAct =
+  | { t: "stack"; op: "dup" | "drop" | "swap" | "over" | "rot" | "unrot" | "last" }
+  | { t: "unary"; expr: string }
+  | { t: "insert"; s: string }
+  | { t: "binop"; op: string }
+  | { t: "angle"; mode: 0 | 1 }
+  | { t: "clear" }
+  | { t: "undo" };
+
+type MenuItem = { label: string; act: MenuAct };
+
+const MENUS: { title: string; items: MenuItem[] }[] = [
+  {
+    title: "STACK",
+    items: [
+      { label: "DUP", act: { t: "stack", op: "dup" } },
+      { label: "DROP", act: { t: "stack", op: "drop" } },
+      { label: "SWAP", act: { t: "stack", op: "swap" } },
+      { label: "OVER", act: { t: "stack", op: "over" } },
+      { label: "ROT", act: { t: "stack", op: "rot" } },
+      { label: "LAST", act: { t: "stack", op: "last" } },
+    ],
+  },
+  {
+    title: "MAT",
+    items: [
+      { label: "TRN", act: { t: "unary", expr: "(__x)'" } },
+      { label: "INV", act: { t: "unary", expr: "inv(__x)" } },
+      { label: "DET", act: { t: "unary", expr: "det(__x)" } },
+      { label: "EYE", act: { t: "insert", s: "eye(" } },
+      { label: "ZER", act: { t: "insert", s: "zeros(" } },
+      { label: "NRM", act: { t: "unary", expr: "norm(__x)" } },
+    ],
+  },
+  {
+    title: "TRIG",
+    items: [
+      { label: "SIN", act: { t: "unary", expr: "sin(__x)" } },
+      { label: "COS", act: { t: "unary", expr: "cos(__x)" } },
+      { label: "TAN", act: { t: "unary", expr: "tan(__x)" } },
+      { label: "ASIN", act: { t: "unary", expr: "asin(__x)" } },
+      { label: "ACOS", act: { t: "unary", expr: "acos(__x)" } },
+      { label: "ATAN", act: { t: "unary", expr: "atan(__x)" } },
+    ],
+  },
+  {
+    title: "EXP",
+    items: [
+      { label: "LN", act: { t: "unary", expr: "log(__x)" } },
+      { label: "LOG", act: { t: "unary", expr: "log10(__x)" } },
+      { label: "EXP", act: { t: "unary", expr: "exp(__x)" } },
+      { label: "SQRT", act: { t: "unary", expr: "sqrt(__x)" } },
+      { label: "ABS", act: { t: "unary", expr: "abs(__x)" } },
+      { label: "SUM", act: { t: "unary", expr: "sum(__x)" } },
+    ],
+  },
+  {
+    title: "MODE",
+    items: [
+      { label: "DEG", act: { t: "angle", mode: 1 } },
+      { label: "RAD", act: { t: "angle", mode: 0 } },
+      { label: "PI", act: { t: "insert", s: "pi" } },
+      { label: "E", act: { t: "insert", s: "e" } },
+      { label: "CLR", act: { t: "clear" } },
+      { label: "UNDO", act: { t: "undo" } },
+    ],
+  },
+];
+
+export type KeyFace = {
+  id: string;
+  label: string;
+  hint?: string;
+  legendL?: string;
+  legendR?: string;
+  alpha?: string;
+  variant: "dark" | "light" | "purple" | "green" | "enter";
+  span?: 2;
+  legend: boolean;
+};
+
+export const KEY_ROWS: KeyFace[][] = [
+  [
+    { id: "mth", label: "MTH", legendL: "RAD", legendR: "DEG", alpha: "G", variant: "dark", legend: true },
+    { id: "prg", label: "PRG", legendL: "DUP", alpha: "H", variant: "dark", legend: true },
+    { id: "cst", label: "CST", legendR: "EQW", alpha: "I", variant: "dark", legend: true },
+    { id: "var", label: "VAR", alpha: "J", variant: "dark", legend: true },
+    { id: "rot", label: "ROT", legendR: "R↓", alpha: "K", variant: "dark", legend: true },
+    { id: "nxt", label: "NXT", legendL: "PREV", alpha: "L", variant: "dark", legend: true },
+  ],
+  [
+    { id: "lparen", label: "(", alpha: "M", variant: "dark", legend: true },
+    { id: "rparen", label: ")", legendL: ",", legendR: ";", alpha: "N", variant: "dark", legend: true },
+    { id: "lbracket", label: "[", legendL: ":", alpha: "O", variant: "dark", legend: true },
+    { id: "rbracket", label: "]", alpha: "P", variant: "dark", legend: true },
+    { id: "eq", label: "=", alpha: "Q", variant: "dark", legend: true },
+    { id: "tick", label: "'", legendL: ":'", alpha: "R", variant: "dark", legend: true },
+  ],
+  [
+    { id: "sin", label: "SIN", legendL: "ASIN", legendR: "SINH", alpha: "S", variant: "dark", legend: true },
+    { id: "cos", label: "COS", legendL: "ACOS", legendR: "COSH", alpha: "T", variant: "dark", legend: true },
+    { id: "tan", label: "TAN", legendL: "ATAN", legendR: "TANH", alpha: "U", variant: "dark", legend: true },
+    { id: "sqrt", label: "√", legendL: "x²", alpha: "V", variant: "dark", legend: true },
+    { id: "pow", label: "yˣ", legendL: ".^", alpha: "W", variant: "dark", legend: true },
+    { id: "inv", label: "1/x", legendL: "EXP", legendR: "LN", alpha: "X", variant: "dark", legend: true },
+  ],
+  [
+    { id: "enter", label: "ENTER", variant: "enter", span: 2, legend: true },
+    { id: "chs", label: "+/−", alpha: "Y", variant: "dark", legend: true },
+    { id: "eex", label: "EEX", alpha: "Z", variant: "dark", legend: true },
+    { id: "del", label: "DEL", legendR: "CLR", variant: "dark", legend: true },
+    { id: "drop", label: "DROP", variant: "dark", legend: true },
+  ],
+  [
+    { id: "alpha", label: "α", variant: "light", legend: true },
+    { id: "7", label: "7", variant: "light", legend: true },
+    { id: "8", label: "8", variant: "light", legend: true },
+    { id: "9", label: "9", variant: "light", legend: true },
+    { id: "div", label: "÷", legendL: "\\", variant: "dark", span: 2, legend: true },
+  ],
+  [
+    { id: "shiftl", label: "◀", variant: "purple", legend: true },
+    { id: "4", label: "4", variant: "light", legend: true },
+    { id: "5", label: "5", variant: "light", legend: true },
+    { id: "6", label: "6", variant: "light", legend: true },
+    { id: "mul", label: "×", legendL: ".*", variant: "dark", span: 2, legend: true },
+  ],
+  [
+    { id: "shiftr", label: "▶", variant: "green", legend: true },
+    { id: "1", label: "1", variant: "light", legend: true },
+    { id: "2", label: "2", variant: "light", legend: true },
+    { id: "3", label: "3", variant: "light", legend: true },
+    { id: "sub", label: "−", variant: "dark", span: 2, legend: true },
+  ],
+  [
+    { id: "on", label: "ON", variant: "dark", legend: true },
+    { id: "0", label: "0", variant: "light", legend: true },
+    { id: "dot", label: ".", variant: "light", legend: true },
+    { id: "spc", label: "SPC", legendL: "π", variant: "light", legend: true },
+    { id: "add", label: "+", variant: "dark", span: 2, legend: true },
+  ],
+];
+
+type Shift = "none" | "l" | "r";
+type Alpha = "off" | "once" | "lock";
+
+type Snap = { stack: Val[]; scope: Map<string, Val>; last: Val | null };
+
+export type LogLine = { name: string; text: string };
+
+export type FaceState = {
+  levels: { level: number; text: string }[];
+  matrix: string | null;
+  command: string;
+  message: string | null;
+  shift: Shift;
+  alpha: Alpha;
+  angle: "RAD" | "DEG";
+  menuTitle: string;
+  menuLabels: string[];
+  bytes: number;
+  listing: string;
+  vars: { name: string; text: string }[];
+  log: LogLine[];
+  xFull: string;
+};
+
+const STORE_KEY = "caliber48";
+
+function lineEndsOpen(line: string): boolean {
+  return /(?:[[(+\-*/\\^=,:;e.]|\.\*|\.\/|\.\\|\.\^)$/i.test(line.trim());
+}
+
+export class Session {
+  readonly engine: Engine;
+  stack: Val[] = [];
+  scope = new Map<string, Val>();
+  line = "";
+  shift: Shift = "none";
+  alpha: Alpha = "off";
+  menu = 0;
+  message: string | null = null;
+  listing = "";
+  bytes = 0;
+  lastBytes: Uint8Array<ArrayBufferLike> = new Uint8Array();
+  log: LogLine[] = [];
+  private last: Val | null = null;
+  private undoStack: Snap[] = [];
+  private listeners = new Set<() => void>();
+
+  constructor(engine: Engine) {
+    this.engine = engine;
+  }
+
+  subscribe(fn: () => void) {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  private emit() {
+    for (const fn of this.listeners) fn();
+  }
+
+  face(): FaceState {
+    const size = this.stack.length;
+    const levels = [4, 3, 2, 1].map((level) => ({
+      level,
+      text: size >= level ? formatShort(this.stack[size - level]!) : "",
+    }));
+    const top = this.stack[size - 1];
+    const matrix = top && top.t === "m" && top.r * top.c > 1 ? formatVal(top) : null;
+    const labels =
+      this.alpha === "off"
+        ? MENUS[this.menu]!.items.map((item) => item.label)
+        : ["A", "B", "C", "D", "E", "F"];
+    const vars = [...this.scope.entries()]
+      .filter(([name]) => name !== "ans")
+      .map(([name, value]) => ({ name, text: formatShort(value) }));
+    return {
+      levels,
+      matrix,
+      command: this.line,
+      message: this.message,
+      shift: this.shift,
+      alpha: this.alpha,
+      angle: this.engine.getAngle() === 1 ? "DEG" : "RAD",
+      menuTitle: this.alpha === "off" ? MENUS[this.menu]!.title : "ALPHA",
+      menuLabels: labels,
+      bytes: this.bytes,
+      listing: this.listing,
+      vars,
+      log: this.log,
+      xFull: top ? formatVal(top) : "",
+    };
+  }
+
+  press(id: string): "script" | "vars" | null {
+    const msg = this.message;
+    this.message = null;
+    if (id === "on") {
+      this.cancel();
+      this.emit();
+      return null;
+    }
+    if (id === "shiftl" || id === "shiftr") {
+      const side: Shift = id === "shiftl" ? "l" : "r";
+      this.shift = this.shift === side ? "none" : side;
+      this.emit();
+      return null;
+    }
+    if (id === "alpha") {
+      this.alpha = this.alpha === "off" ? "once" : this.alpha === "once" ? "lock" : "off";
+      this.shift = "none";
+      this.emit();
+      return null;
+    }
+    if (msg && id.startsWith("soft")) {
+      /* the key still runs */
+    }
+    const shifted = this.shift;
+    this.shift = "none";
+    if (id.startsWith("soft")) {
+      const index = Number(id.slice(4));
+      if (this.alpha !== "off") {
+        this.insertChar("ABCDEF"[index] ?? "");
+        if (this.alpha === "once") this.alpha = "off";
+        this.emit();
+        return null;
+      }
+      this.runAct(MENUS[this.menu]!.items[index]!.act);
+      this.emit();
+      return null;
+    }
+    const key = KEY_ROWS.flat().find((item) => item.id === id);
+    if (this.alpha !== "off" && key?.alpha && shifted === "none") {
+      this.insertChar(key.alpha);
+      if (this.alpha === "once") this.alpha = "off";
+      this.emit();
+      return null;
+    }
+    const effect = this.dispatch(id, shifted);
+    this.emit();
+    return effect;
+  }
+
+  insertChar(ch: string) {
+    this.line += ch;
+  }
+
+  typeText(ch: string) {
+    this.message = null;
+    this.insertChar(ch);
+    this.emit();
+  }
+
+  runSource(src: string) {
+    this.message = null;
+    this.execSource(src, true);
+    this.emit();
+  }
+
+  restore() {
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      if (!raw) return;
+      const data = JSON.parse(raw) as {
+        stack: Serialized[];
+        scope: [string, Serialized][];
+        line: string;
+        angle: 0 | 1;
+        menu: number;
+      };
+      this.stack = data.stack.map(hydrate);
+      this.scope = new Map(data.scope.map(([name, value]) => [name, hydrate(value)]));
+      this.line = data.line ?? "";
+      this.menu = data.menu ?? 0;
+      this.engine.setAngle(data.angle === 1 ? 1 : 0);
+    } catch {
+      /* ignore broken saves */
+    }
+  }
+
+  persist() {
+    const data = {
+      stack: this.stack.map(dehydrate),
+      scope: [...this.scope.entries()].map(([name, value]) => [name, dehydrate(value)]),
+      line: this.line,
+      angle: this.engine.getAngle(),
+      menu: this.menu,
+    };
+    localStorage.setItem(STORE_KEY, JSON.stringify(data));
+  }
+
+  private dispatch(id: string, shift: Shift): "script" | "vars" | null {
+    if (shift === "l") {
+      const left: Record<string, () => void> = {
+        mth: () => this.setAngle(0),
+        prg: () => this.stackOp("dup"),
+        nxt: () => this.stepMenu(-1),
+        rparen: () => this.insertChar(","),
+        lbracket: () => this.insertChar(":"),
+        tick: () => this.insertChar(".'"),
+        sin: () => this.applyFn("asin(__x)", "asin("),
+        cos: () => this.applyFn("acos(__x)", "acos("),
+        tan: () => this.applyFn("atan(__x)", "atan("),
+        sqrt: () => this.applyFn("(__x)^2", "^2"),
+        pow: () => this.applyBin(".^", ".^"),
+        inv: () => this.applyFn("exp(__x)", "exp("),
+        del: () => this.clearStack(),
+        div: () => this.applyBin("\\", "\\"),
+        mul: () => this.applyBin(".*", ".*"),
+        spc: () => this.insertChar("pi"),
+      };
+      const fn = left[id];
+      if (!fn) this.message = "No Function";
+      else fn();
+      return null;
+    }
+    if (shift === "r") {
+      const right: Record<string, () => void> = {
+        mth: () => this.setAngle(1),
+        cst: () => undefined,
+        rot: () => this.stackOp("unrot"),
+        rparen: () => this.insertChar(";"),
+        sin: () => this.applyFn("sinh(__x)", "sinh("),
+        cos: () => this.applyFn("cosh(__x)", "cosh("),
+        tan: () => this.applyFn("tanh(__x)", "tanh("),
+        inv: () => this.applyFn("log(__x)", "log("),
+        del: () => this.clearStack(),
+      };
+      if (id === "cst") return "script";
+      const fn = right[id];
+      if (!fn) this.message = "No Function";
+      else fn();
+      return null;
+    }
+    switch (id) {
+      case "mth":
+        this.menu = 2;
+        return null;
+      case "prg":
+        this.menu = 0;
+        return null;
+      case "cst":
+        return "script";
+      case "var":
+        return "vars";
+      case "rot":
+        this.stackOp("rot");
+        return null;
+      case "nxt":
+        this.stepMenu(1);
+        return null;
+      case "lparen":
+        this.insertChar("(");
+        return null;
+      case "rparen":
+        this.insertChar(")");
+        return null;
+      case "lbracket":
+        this.insertChar("[");
+        return null;
+      case "rbracket":
+        this.insertChar("]");
+        return null;
+      case "eq":
+        this.insertChar("=");
+        return null;
+      case "tick":
+        this.applyFn("(__x)'", "'");
+        return null;
+      case "sin":
+        this.applyFn("sin(__x)", "sin(");
+        return null;
+      case "cos":
+        this.applyFn("cos(__x)", "cos(");
+        return null;
+      case "tan":
+        this.applyFn("tan(__x)", "tan(");
+        return null;
+      case "sqrt":
+        this.applyFn("sqrt(__x)", "sqrt(");
+        return null;
+      case "pow":
+        this.applyBin("^", "^");
+        return null;
+      case "inv":
+        this.applyFn("1/(__x)", "1/");
+        return null;
+      case "enter":
+        this.enter();
+        return null;
+      case "chs":
+        this.chs();
+        return null;
+      case "eex":
+        this.insertChar("e");
+        return null;
+      case "del":
+        this.del();
+        return null;
+      case "drop":
+        this.stackOp("drop");
+        return null;
+      case "alpha":
+        return null;
+      case "div":
+        this.applyBin("/", "/");
+        return null;
+      case "mul":
+        this.applyBin("*", "*");
+        return null;
+      case "sub":
+        this.applyBin("-", "-");
+        return null;
+      case "add":
+        this.applyBin("+", "+");
+        return null;
+      case "spc":
+        this.insertChar(" ");
+        return null;
+      case "dot":
+        this.insertChar(".");
+        return null;
+      case "on":
+        this.cancel();
+        return null;
+      default:
+        if (/^\d$/.test(id)) this.insertChar(id);
+        return null;
+    }
+  }
+
+  private runAct(act: MenuAct) {
+    switch (act.t) {
+      case "stack":
+        this.stackOp(act.op);
+        break;
+      case "unary":
+        this.applyFn(act.expr, act.expr.includes("(") ? act.expr.slice(0, act.expr.indexOf("(") + 1) : "");
+        break;
+      case "insert":
+        this.insertChar(act.s);
+        break;
+      case "binop":
+        this.applyBin(act.op, act.op);
+        break;
+      case "angle":
+        this.setAngle(act.mode);
+        break;
+      case "clear":
+        this.clearStack();
+        break;
+      case "undo":
+        this.undo();
+        break;
+    }
+  }
+
+  private setAngle(mode: 0 | 1) {
+    this.engine.setAngle(mode);
+  }
+
+  private stepMenu(dir: number) {
+    this.menu = (this.menu + dir + MENUS.length) % MENUS.length;
+  }
+
+  private cancel() {
+    this.line = "";
+    this.shift = "none";
+    this.alpha = "off";
+    this.message = null;
+  }
+
+  private del() {
+    if (this.line) this.line = this.line.slice(0, -1);
+    else this.stackOp("drop");
+  }
+
+  private enter() {
+    if (!this.line.trim()) {
+      this.stackOp("dup");
+      return;
+    }
+    if (!this.execSource(this.line, true)) return;
+    this.line = "";
+    if (this.alpha !== "lock") this.alpha = "off";
+  }
+
+  private chs() {
+    if (this.line) {
+      this.line = this.line.startsWith("-") ? this.line.slice(1) : `-${this.line}`;
+      return;
+    }
+    this.applyFn("-(__x)", "-");
+  }
+
+  private clearStack() {
+    this.checkpoint();
+    this.stack = [];
+    this.line = "";
+  }
+
+  private stackOp(op: "dup" | "drop" | "swap" | "over" | "rot" | "unrot" | "last") {
+    if (op === "last") {
+      if (!this.last) {
+        this.message = "No Last";
+        return;
+      }
+      this.checkpoint();
+      this.stack.push(cloneVal(this.last));
+      return;
+    }
+    if (op === "dup") {
+      if (!this.stack.length) {
+        this.message = "Too Few Arguments";
+        return;
+      }
+      this.checkpoint();
+      this.stack.push(cloneVal(this.stack[this.stack.length - 1]!));
+      return;
+    }
+    if (op === "drop") {
+      if (!this.stack.length) {
+        this.message = "Too Few Arguments";
+        return;
+      }
+      this.checkpoint();
+      this.stack.pop();
+      return;
+    }
+    if (op === "swap" || op === "over") {
+      if (this.stack.length < 2) {
+        this.message = "Too Few Arguments";
+        return;
+      }
+      this.checkpoint();
+      const x = this.stack.pop()!;
+      const y = this.stack.pop()!;
+      if (op === "swap") this.stack.push(x, y);
+      else this.stack.push(y, x, cloneVal(y));
+      return;
+    }
+    if (this.stack.length < 3) {
+      this.message = "Too Few Arguments";
+      return;
+    }
+    this.checkpoint();
+    const x = this.stack.pop()!;
+    const y = this.stack.pop()!;
+    const z = this.stack.pop()!;
+    if (op === "rot") this.stack.push(y, x, z);
+    else this.stack.push(x, z, y);
+  }
+
+  private applyBin(op: string, insert: string) {
+    if (this.line.trim()) {
+      this.insertChar(insert);
+      return;
+    }
+    if (this.stack.length < 2) {
+      this.message = "Too Few Arguments";
+      return;
+    }
+    this.checkpoint();
+    const x = this.stack.pop()!;
+    const y = this.stack.pop()!;
+    this.last = cloneVal(x);
+    const scope = new Map(this.scope);
+    scope.set("__y", y);
+    scope.set("__x", x);
+    const result = runScript(`__y ${op} __x`, scope, this.engine);
+    if (!result.ok || !result.pushed[0]) {
+      this.revert();
+      this.message = result.ok ? "Bad Size" : result.error;
+      return;
+    }
+    this.note(result.listing, result.bytes);
+    this.stack.push(cloneVal(result.pushed[0]));
+  }
+
+  private applyFn(expr: string, insert: string) {
+    if (this.line.trim() && lineEndsOpen(this.line)) {
+      if (insert) this.insertChar(insert);
+      return;
+    }
+    if (this.line.trim()) {
+      if (!this.execSource(this.line, true)) return;
+      this.line = "";
+    }
+    if (!this.stack.length) {
+      if (insert && insert !== "'" && insert !== ".'" && insert !== "^2") this.insertChar(insert);
+      else this.message = "Too Few Arguments";
+      return;
+    }
+    this.checkpoint();
+    const x = this.stack.pop()!;
+    this.last = cloneVal(x);
+    const scope = new Map(this.scope);
+    scope.set("__x", x);
+    const result = runScript(expr, scope, this.engine);
+    if (!result.ok || !result.pushed[0]) {
+      this.revert();
+      this.message = result.ok ? "Bad Size" : result.error;
+      return;
+    }
+    this.note(result.listing, result.bytes);
+    this.stack.push(cloneVal(result.pushed[0]));
+  }
+
+  private execSource(src: string, push: boolean): boolean {
+    const trimmed = src.trim();
+    if (!trimmed) return true;
+    this.checkpoint();
+    const result = runScript(trimmed, this.scope, this.engine);
+    if (!result.ok) {
+      this.revert();
+      this.message = result.error;
+      return false;
+    }
+    this.note(result.listing, result.bytes);
+    for (const row of result.printed) {
+      this.log = [...this.log, { name: row.name, text: formatVal(row.value) }].slice(-8);
+    }
+    if (push) {
+      for (const value of result.pushed) this.stack.push(cloneVal(value));
+    }
+    return true;
+  }
+
+  private note(listing: string, bytes: Uint8Array<ArrayBufferLike>) {
+    this.listing = listing;
+    this.bytes = bytes.byteLength;
+    this.lastBytes = bytes;
+  }
+
+  private checkpoint() {
+    this.undoStack.push(this.capture());
+    if (this.undoStack.length > 30) this.undoStack.shift();
+  }
+
+  private revert() {
+    const snap = this.undoStack.pop();
+    if (snap) this.apply(snap);
+  }
+
+  private undo() {
+    const snap = this.undoStack.pop();
+    if (!snap) {
+      this.message = "Nothing to Undo";
+      return;
+    }
+    this.apply(snap);
+  }
+
+  private capture(): Snap {
+    const scope = new Map<string, Val>();
+    for (const [name, value] of this.scope) scope.set(name, cloneVal(value));
+    return {
+      stack: this.stack.map(cloneVal),
+      scope,
+      last: this.last ? cloneVal(this.last) : null,
+    };
+  }
+
+  private apply(snap: Snap) {
+    this.stack = snap.stack;
+    this.scope = snap.scope;
+    this.last = snap.last;
+  }
+}
+
+type Serialized =
+  | { t: "s"; v: number }
+  | { t: "m"; r: number; c: number; d: number[] };
+
+function dehydrate(v: Val): Serialized {
+  if (v.t === "s") return { t: "s", v: v.v };
+  return { t: "m", r: v.r, c: v.c, d: [...v.d] };
+}
+
+function hydrate(v: Serialized): Val {
+  if (v.t === "s") return { t: "s", v: v.v };
+  return { t: "m", r: v.r, c: v.c, d: new Float64Array(v.d) };
+}
+
+export function bootSession(): Session {
+  return new Session(createEngine());
+}

@@ -1,0 +1,202 @@
+@import "tailwindcss";
+@import "@fontsource/barlow-condensed/latin-600.css";
+@import "@fontsource/barlow-condensed/latin-700.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+
+@theme {
+  --font-sans: "Barlow Condensed", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --color-bg: #121416;
+  --color-body: #2c3033;
+  --color-body-edge: #141618;
+  --color-ink: #ece8e1;
+  --color-muted: #9a958c;
+  --color-line: #3e4448;
+  --color-key: #1c2023;
+  --color-key-ink: #f3f0ea;
+  --color-num: #d7d4cc;
+  --color-num-ink: #1a1c1e;
+  --color-lcd: #b7c3a4;
+  --color-lcd-ink: #1a2116;
+  --color-lcd-dim: #5c6a50;
+  --color-lcd-well: #161a17;
+  --color-shift: #7a3eab;
+  --color-shift-ink: #f6f0fb;
+  --color-right: #1f8f45;
+  --color-right-ink: #f3fff6;
+  --color-legend-l: #e2c6ff;
+  --color-legend-r: #9af0b8;
+  --color-menu: #eceae4;
+  --color-menu-ink: #1c1e20;
+  --color-danger: #e07a68;
+  --radius-device: 1.75rem;
+  --radius-key: 0.4rem;
+  --text-2xs: 0.625rem;
+  --text-2xs--line-height: 0.75rem;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    background: var(--color-bg);
+    color: var(--color-ink);
+  }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background: var(--color-bg);
+    font-family: var(--font-sans);
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  .device {
+    background: var(--color-body);
+    color: var(--color-key-ink);
+    border-radius: var(--radius-device);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, white 18%, transparent),
+      0 18px 40px rgb(0 0 0 / 0.45);
+  }
+  .lcd-well {
+    background: var(--color-lcd-well);
+    border-radius: 0.85rem;
+    padding: 0.35rem;
+    box-shadow: inset 0 2px 6px rgb(0 0 0 / 0.45);
+  }
+  .lcd {
+    background: var(--color-lcd);
+    color: var(--color-lcd-ink);
+    border-radius: 0.55rem;
+    font-family: var(--font-mono);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, black 18%, transparent);
+  }
+  .key-row {
+    display: grid;
+    min-height: 2.65rem;
+    flex: 1 1 auto;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-rows: minmax(1.6rem, 1fr);
+    gap: 0.15rem;
+  }
+  .span-2 {
+    grid-column: span 2;
+  }
+  .key-slot {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .legends {
+    display: flex;
+    height: 0.7rem;
+    flex: none;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding-inline: 0.05rem;
+    font-size: var(--text-2xs);
+    line-height: 0.7rem;
+    font-weight: 600;
+  }
+  .legend-l {
+    color: var(--color-legend-l);
+  }
+  .legend-r {
+    color: var(--color-legend-r);
+  }
+  .device[data-shift="l"] .legend-l {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .device[data-shift="r"] .legend-r {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .keycap {
+    position: relative;
+    display: flex;
+    min-height: 1.7rem;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-key);
+    padding: 0.05rem 0.15rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    line-height: 1;
+    user-select: none;
+    touch-action: manipulation;
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, white 24%, transparent),
+      0 2px 0 var(--color-body-edge);
+  }
+  .keycap:active {
+    transform: translateY(1px);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, white 10%, transparent);
+  }
+  .keycap:focus-visible {
+    outline: 2px solid var(--color-legend-l);
+    outline-offset: 1px;
+  }
+  .keycap-dark,
+  .keycap-enter {
+    background: var(--color-key);
+    color: var(--color-key-ink);
+  }
+  .keycap-light {
+    background: var(--color-num);
+    color: var(--color-num-ink);
+  }
+  .keycap-purple {
+    background: var(--color-shift);
+    color: var(--color-shift-ink);
+  }
+  .keycap-green {
+    background: var(--color-right);
+    color: var(--color-right-ink);
+  }
+  .keycap-menu {
+    background: var(--color-menu);
+    color: var(--color-menu-ink);
+    min-height: 0;
+  }
+  .key-nub {
+    width: 1.1rem;
+    height: 0.18rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-menu-ink) 35%, transparent);
+  }
+  .alpha-ch {
+    position: absolute;
+    right: 0.2rem;
+    bottom: 0.12rem;
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    opacity: 0.55;
+  }
+  .lcd-caret {
+    display: inline-block;
+    width: 0.45rem;
+    height: 0.85em;
+    background: var(--color-lcd-ink);
+    vertical-align: text-bottom;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .lcd-caret {
+      animation: caret 1.05s steps(1) infinite;
+    }
+  }
+  @keyframes caret {
+    50% {
+      opacity: 0;
+    }
+  }
+}

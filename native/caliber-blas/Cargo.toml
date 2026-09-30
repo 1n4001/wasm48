@@ -1,0 +1,19 @@
+[package]
+name = "caliber-blas"
+version = "0.1.0"
+edition = "2021"
+description = "Calculator BLAS subset compiled to WebAssembly. DGEMM is the matrixmultiply crate."
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+matrixmultiply = "0.3"
+
+[profile.release]
+opt-level = 2
+lto = false
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
