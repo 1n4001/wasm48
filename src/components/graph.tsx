@@ -24,7 +24,7 @@ export function Graph({ plot }: { plot: PlotSpec }) {
     ctx.clearRect(0, 0, width, height);
     ctx.fillStyle = "#171b18";
     ctx.fillRect(0, 0, width, height);
-    if (plot.kind === "xy") drawCurve(ctx, width, height, plot.xs, plot.ys);
+    if (plot.kind === "xy") drawCurve(ctx, width, height, plot, ratio);
     else drawSurface(ctx, width, height, plot, view.yaw, view.pitch);
   }, [plot, view]);
 
@@ -59,49 +59,77 @@ export function Graph({ plot }: { plot: PlotSpec }) {
   );
 }
 
-function drawCurve(ctx: CanvasRenderingContext2D, width: number, height: number, xs: number[], ys: number[]) {
+function drawCurve(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  plot: Extract<PlotSpec, { kind: "xy" }>,
+  ratio: number,
+) {
   const pad = 28;
+  const plotWidth = Math.max(1, width - pad * 2);
+  const columns = Math.max(2, Math.round(plotWidth * ratio));
+  const centers: { x: number; y: number; lo: number; hi: number }[] = [];
   let y0 = Infinity;
   let y1 = -Infinity;
-  for (const y of ys) {
-    if (!Number.isFinite(y)) continue;
-    y0 = Math.min(y0, y);
-    y1 = Math.max(y1, y);
+  for (let i = 0; i < columns; i++) {
+    const x = plot.a + ((plot.b - plot.a) * (i + 0.5)) / columns;
+    const left = plot.a + ((plot.b - plot.a) * i) / columns;
+    const right = plot.a + ((plot.b - plot.a) * (i + 1)) / columns;
+    const y = plot.sample(x);
+    let lo = y;
+    let hi = y;
+    for (const t of [0, 0.25, 0.75, 1]) {
+      const sample = plot.sample(left + (right - left) * t);
+      if (!Number.isFinite(sample)) continue;
+      if (!Number.isFinite(lo) || sample < lo) lo = sample;
+      if (!Number.isFinite(hi) || sample > hi) hi = sample;
+    }
+    centers.push({ x, y, lo, hi });
+    if (Number.isFinite(lo) && lo < y0) y0 = lo;
+    if (Number.isFinite(hi) && hi > y1) y1 = hi;
   }
   if (!Number.isFinite(y0)) return;
   if (y0 === y1) {
     y0 -= 1;
     y1 += 1;
   }
-  const xMin = xs[0] ?? 0;
-  const xMax = xs[xs.length - 1] ?? 1;
-  const X = (x: number) => pad + ((x - xMin) / (xMax - xMin || 1)) * (width - pad * 2);
+  const X = (x: number) => pad + ((x - plot.a) / (plot.b - plot.a || 1)) * plotWidth;
   const Y = (y: number) => height - pad - ((y - y0) / (y1 - y0)) * (height - pad * 2);
   ctx.strokeStyle = "#5c6a50";
-  ctx.lineWidth = 1;
+  ctx.lineWidth = 1 / ratio;
   ctx.beginPath();
   if (y0 <= 0 && y1 >= 0) {
     ctx.moveTo(pad, Y(0));
     ctx.lineTo(width - pad, Y(0));
   }
-  ctx.moveTo(X(xMin), pad);
-  ctx.lineTo(X(xMin), height - pad);
+  ctx.moveTo(X(plot.a), pad);
+  ctx.lineTo(X(plot.a), height - pad);
   ctx.stroke();
   ctx.strokeStyle = "#9af0b8";
-  ctx.lineWidth = 1.6;
+  ctx.lineWidth = 1.25 / ratio;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
   ctx.beginPath();
   let drawing = false;
-  ys.forEach((y, i) => {
-    if (!Number.isFinite(y)) {
+  for (const col of centers) {
+    if (!Number.isFinite(col.y)) {
       drawing = false;
-      return;
+      continue;
     }
-    const px = X(xs[i] ?? 0);
-    const py = Y(y);
+    const px = X(col.x);
+    const py = Y(col.y);
+    const span = Math.abs(Y(col.lo) - Y(col.hi));
+    if (span > 2 / ratio) {
+      ctx.moveTo(px, Y(col.lo));
+      ctx.lineTo(px, Y(col.hi));
+      drawing = false;
+      continue;
+    }
     if (!drawing) ctx.moveTo(px, py);
     else ctx.lineTo(px, py);
     drawing = true;
-  });
+  }
   ctx.stroke();
   ctx.fillStyle = "#9a958c";
   ctx.font = "12px IBM Plex Mono, monospace";

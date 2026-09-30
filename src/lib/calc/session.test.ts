@@ -66,9 +66,13 @@ describe("rpn session", () => {
     const plot = session.face().plot;
     assert.equal(plot?.kind, "xy");
     if (plot?.kind === "xy") {
-      const mid = plot.ys[Math.floor(plot.ys.length / 2)] ?? 0;
-      assert.ok(mid > 0.9);
+      assert.ok(plot.sample((plot.a + plot.b) / 2) > 0.9);
     }
+
+    session.runSource("plot(sin(33*x), x, 0, 2*pi)");
+    const fast = session.face().plot;
+    assert.equal(fast?.kind, "xy");
+    if (fast?.kind === "xy") assert.ok(Math.abs(fast.sample(Math.PI / 66) - 1) < 1e-9);
 
     session.runSource("surf(x^2 - y^2, x, -1, 1, y, -1, 1)");
     assert.equal(session.face().plot?.kind, "xyz");

@@ -8,7 +8,7 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Caliber 48" },
+      { title: "WASM48" },
       {
         name: "description",
         content: "RPN calculator with a MATLAB-style line that compiles to WebAssembly and BLAS.",

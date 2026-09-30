@@ -1,6 +1,6 @@
 import { Asm, F64, I32, OP, WasmModule } from "./wasm-module.ts";
 import { type Engine, type Val, cloneVal, matrix, scalar, valData } from "./engine.ts";
-import { definiteIntegral, derivative, sampleCurve, sampleSurface, type Plot } from "./calculus.ts";
+import { definiteIntegral, derivative, sampleSurface, type Plot } from "./calculus.ts";
 
 export class MatlabError extends Error {
   constructor(message: string) {
@@ -1216,8 +1216,9 @@ function calculusStmt(expr: Expr, scope: Map<string, Val>): { value?: Val; plot?
     const variable = varName(expr.args[1]!);
     const a = numArg(expr.args[2]!, scope);
     const b = numArg(expr.args[3]!, scope);
-    const curve = sampleCurve((x) => evalAt(expr.args[0]!, variable, x, scope), a, b);
-    return { plot: { kind: "xy", label: exprText(expr.args[0]!), xs: curve.xs, ys: curve.ys } };
+    const sample = makeEval1(expr.args[0]!, variable, scope);
+    if (!Number.isFinite(sample(a)) && !Number.isFinite(sample((a + b) / 2))) throw new MatlabError("Cannot evaluate");
+    return { plot: { kind: "xy", label: exprText(expr.args[0]!), a, b, sample } };
   }
   if (expr.args.length !== 7) throw new MatlabError("Too Few Arguments");
   const xv = varName(expr.args[1]!);
@@ -1244,6 +1245,19 @@ function numArg(expr: Expr, scope: Map<string, Val>): number {
     if (err instanceof MatlabError) throw err;
     throw new MatlabError("Bad bound");
   }
+}
+
+function makeEval1(expr: Expr, variable: string, scope: Map<string, Val>): (x: number) => number {
+  const next = new Map(scope);
+  return (x: number) => {
+    next.set(variable, scalar(x));
+    try {
+      const y = fold(expr, next);
+      return Number.isFinite(y) ? y : NaN;
+    } catch {
+      return NaN;
+    }
+  };
 }
 
 function evalAt(expr: Expr, variable: string, x: number, scope: Map<string, Val>): number {

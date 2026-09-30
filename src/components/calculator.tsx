@@ -98,13 +98,9 @@ export function Calculator() {
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-3">
-      <section className="device flex w-full flex-col gap-2 p-3" data-shift={face.shift} aria-label="Caliber 48">
-        <header className="flex items-end justify-between px-1">
-          <div>
-            <p className="text-xs tracking-[0.28em] text-muted">CALIBER</p>
-            <p className="text-2xl leading-none font-bold tracking-wide">48</p>
-          </div>
-          <p className="pb-0.5 text-right text-2xs tracking-[0.18em] text-legend-r">MATLAB · DGEMM</p>
+      <section className="device flex w-full flex-col gap-2 p-3" data-shift={face.shift} aria-label="WASM48">
+        <header className="px-1">
+          <p className="text-2xl leading-none font-bold tracking-[0.18em]">WASM48</p>
         </header>
         <div className="flex items-stretch gap-3">
           <div className="lcd-well flex min-h-full min-w-0 flex-1">
@@ -117,7 +113,7 @@ export function Calculator() {
                 </span>
                 <span className="font-bold">{face.angle}</span>
               </div>
-              <div ref={stackRef} className="flex flex-1 flex-col justify-end gap-2 text-base leading-tight">
+              <div ref={stackRef} className="flex flex-1 flex-col justify-end gap-3 text-base">
                 {face.levels.map((row) => (
                   <div key={row.level}>
                     <div className="text-left">
@@ -216,7 +212,7 @@ export function Calculator() {
           ) : null}
         </div>
         <div className="flex min-w-0 flex-col gap-2">
-          <h2 className="text-sm tracking-[0.16em] text-muted">NAMES</h2>
+          <h2 className="text-sm tracking-[0.16em] text-muted">Variables</h2>
           <ul className="flex flex-col gap-2">
             {face.vars.length === 0 ? <li className="bg-body px-3 py-2 text-sm text-muted">No named variables yet.</li> : null}
             {face.vars.map((row) => (

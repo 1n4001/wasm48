@@ -33,7 +33,7 @@ function render(e: Expr): Piece {
     }
     case "mat":
       return {
-        xml: `<mrow><mo>[</mo><mtable>${e.rows
+        xml: `<mrow><mo>[</mo><mtable rowspacing="0.4em" columnspacing="0.6em">${e.rows
           .map((row) => `<mtr>${row.map((cell) => `<mtd>${render(cell).xml}</mtd>`).join("")}</mtr>`)
           .join("")}</mtable><mo>]</mo></mrow>`,
         prec: 6,

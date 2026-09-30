@@ -1,7 +1,7 @@
 import type { Expr } from "./matlab.ts";
 
 export type Plot =
-  | { kind: "xy"; label: string; xs: number[]; ys: number[] }
+  | { kind: "xy"; label: string; a: number; b: number; sample: (x: number) => number }
   | { kind: "xyz"; label: string; xs: number[]; ys: number[]; zs: number[][] };
 
 export function derivative(expr: Expr, variable: string): Expr {
@@ -14,18 +14,6 @@ export function definiteIntegral(sample: (x: number) => number, a: number, b: nu
   if (a > b) return -definiteIntegral(sample, b, a);
   const whole = simpson(sample, a, b);
   return adapt(sample, a, b, 1e-7, whole, 16);
-}
-
-export function sampleCurve(sample: (x: number) => number, a: number, b: number, n = 160): { xs: number[]; ys: number[] } {
-  if (!(b > a)) throw new Error("Bad bound");
-  const xs: number[] = [];
-  const ys: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const x = a + ((b - a) * i) / (n - 1);
-    xs.push(x);
-    ys.push(sample(x));
-  }
-  return { xs, ys };
 }
 
 export function sampleSurface(
