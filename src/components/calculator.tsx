@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { EXAMPLES, FUNCTIONS, KEY_ROWS, Session, bootSession, type FaceState } from "@/lib/calc/session";
 import { Graph } from "@/components/graph";
 import { MathView } from "@/components/math-view";
@@ -30,7 +30,35 @@ export function Calculator() {
   const [face, setFace] = useState<FaceState>(emptyFace);
   const [source, setSource] = useState(STARTER);
   const [keysOpen, setKeysOpen] = useState(true);
+  const [fnQuery, setFnQuery] = useState("");
+  const [fnGroup, setFnGroup] = useState("All");
+  const [fnSort, setFnSort] = useState<{ key: "group" | "name" | "about" | "example"; dir: "asc" | "desc" } | null>(null);
   const stackRef = useRef<HTMLDivElement>(null);
+  const fnGroups = useMemo(() => ["All", ...new Set(FUNCTIONS.map((row) => row.group))], []);
+  const fnRows = useMemo(() => {
+    const q = fnQuery.trim().toLowerCase();
+    const filtered = FUNCTIONS.filter((row) => {
+      if (fnGroup !== "All" && row.group !== fnGroup) return false;
+      if (!q) return true;
+      return `${row.group} ${row.name} ${row.args} ${row.about} ${row.example}`.toLowerCase().includes(q);
+    });
+    if (!fnSort) return filtered;
+    const dir = fnSort.dir === "asc" ? 1 : -1;
+    return filtered.slice().sort((a, b) => {
+      const av = fnSort.key === "name" ? `${a.name}(${a.args})` : a[fnSort.key];
+      const bv = fnSort.key === "name" ? `${b.name}(${b.args})` : b[fnSort.key];
+      const cmp = av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" });
+      return cmp === 0 ? a.name.localeCompare(b.name) : cmp * dir;
+    });
+  }, [fnGroup, fnQuery, fnSort]);
+
+  function sortFns(key: "group" | "name" | "about" | "example") {
+    setFnSort((current) => {
+      if (current?.key !== key) return { key, dir: "asc" };
+      if (current.dir === "asc") return { key, dir: "desc" };
+      return null;
+    });
+  }
 
   useEffect(() => {
     const session = bootSession();
@@ -228,36 +256,87 @@ export function Calculator() {
           </ul>
         </div>
       </section>
-      <section className="overflow-x-auto bg-body">
-        <h2 className="px-3 pt-3 text-sm tracking-[0.16em] text-muted">Functions</h2>
-        <table className="w-full text-left text-sm">
-          <thead className="text-xs tracking-[0.14em] text-muted">
-            <tr>
-              <th className="px-3 py-2 font-medium">Group</th>
-              <th className="px-3 py-2 font-medium">Call</th>
-              <th className="px-3 py-2 font-medium">What it does</th>
-              <th className="px-3 py-2 font-medium">Example</th>
-            </tr>
-          </thead>
-          <tbody>
-            {FUNCTIONS.map((row) => (
-              <tr key={`${row.name}-${row.args}`} className="border-t border-line">
-                <td className="px-3 py-2 text-muted">{row.group}</td>
-                <td className="px-3 py-2 font-mono text-legend-l">
-                  {row.name}({row.args})
-                </td>
-                <td className="px-3 py-2 text-ink">{row.about}</td>
-                <td className="px-3 py-2">
-                  <button type="button" className="font-mono text-legend-r" onClick={() => setSource(row.example)}>
-                    {row.example}
-                  </button>
-                </td>
-              </tr>
+      <section className="bg-body">
+        <div className="flex flex-wrap items-center gap-2 px-3 pt-3">
+          <h2 className="text-sm tracking-[0.16em] text-muted">Functions</h2>
+          <input
+            value={fnQuery}
+            onChange={(event) => setFnQuery(event.target.value)}
+            placeholder="Search"
+            aria-label="Search functions"
+            className="min-w-40 flex-1 bg-bg px-3 py-1.5 font-mono text-sm text-ink outline-none"
+          />
+          <select
+            value={fnGroup}
+            onChange={(event) => setFnGroup(event.target.value)}
+            aria-label="Function group"
+            className="bg-bg px-2 py-1.5 text-sm text-ink outline-none"
+          >
+            {fnGroups.map((group) => (
+              <option key={group}>{group}</option>
             ))}
-          </tbody>
-        </table>
+          </select>
+          <span className="text-sm text-muted">
+            {fnRows.length} / {FUNCTIONS.length}
+          </span>
+        </div>
+        <div className="max-h-[32rem] overflow-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="sticky top-0 bg-body text-xs tracking-[0.14em] text-muted">
+              <tr>
+                <FnHead label="Group" sort={fnSort} k="group" onSort={sortFns} />
+                <FnHead label="Call" sort={fnSort} k="name" onSort={sortFns} />
+                <FnHead label="What it does" sort={fnSort} k="about" onSort={sortFns} />
+                <FnHead label="Example" sort={fnSort} k="example" onSort={sortFns} />
+              </tr>
+            </thead>
+            <tbody>
+              {fnRows.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-3 py-3 text-muted">
+                    No functions match.
+                  </td>
+                </tr>
+              ) : null}
+              {fnRows.map((row) => (
+                <tr key={`${row.group}-${row.name}-${row.args}`} className="border-t border-line">
+                  <td className="px-3 py-2 text-muted">{row.group}</td>
+                  <td className="px-3 py-2 font-mono text-legend-l">{row.args ? `${row.name}(${row.args})` : row.name}</td>
+                  <td className="px-3 py-2 text-ink">{row.about}</td>
+                  <td className="px-3 py-2">
+                    <button type="button" className="font-mono text-legend-r" onClick={() => setSource(row.example)}>
+                      {row.example}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
     </main>
+  );
+}
+
+function FnHead({
+  label,
+  k,
+  sort,
+  onSort,
+}: {
+  label: string;
+  k: "group" | "name" | "about" | "example";
+  sort: { key: string; dir: "asc" | "desc" } | null;
+  onSort: (key: "group" | "name" | "about" | "example") => void;
+}) {
+  const active = sort?.key === k;
+  return (
+    <th className="px-3 py-2 font-medium" aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+      <button type="button" className="text-left tracking-[0.14em]" onClick={() => onSort(k)}>
+        {label}
+        {active ? (sort.dir === "asc" ? " ↑" : " ↓") : ""}
+      </button>
+    </th>
   );
 }
 

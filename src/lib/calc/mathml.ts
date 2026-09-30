@@ -108,6 +108,18 @@ function renderCall(name: string, args: Expr[]): Piece {
   if (name === "nthroot" && x && y && args.length === 2) {
     return { xml: `<mroot>${render(x).xml}${render(y).xml}</mroot>`, prec: 6, atom: "other" };
   }
+  if (name === "factorial" && x && args.length === 1) {
+    const base = render(x);
+    const shown = base.prec < 3 ? paren(base, 3) : base.xml;
+    return { xml: `<mrow>${shown}<mo>!</mo></mrow>`, prec: 3, atom: "other" };
+  }
+  if (name === "nchoosek" && x && y && args.length === 2) {
+    return {
+      xml: `<mrow><mo>(</mo><mtable rowspacing="0"><mtr><mtd>${render(x).xml}</mtd></mtr><mtr><mtd>${render(y).xml}</mtd></mtr></mtable><mo>)</mo></mrow>`,
+      prec: 6,
+      atom: "other",
+    };
+  }
   if (name === "abs" && x && args.length === 1) {
     return { xml: `<mrow><mo>|</mo>${render(x).xml}<mo>|</mo></mrow>`, prec: 6, atom: "other" };
   }

@@ -86,6 +86,31 @@ describe("matlab wasm", () => {
     assert.ok(Math.abs((roots.d[1] ?? 0) + 3) < 1e-9);
   });
 
+  it("evaluates special functions, statistics, and physics", () => {
+    assert.equal(num("factorial(5)"), 120);
+    assert.ok(Math.abs(num("gamma(0.5)") - Math.sqrt(Math.PI)) < 1e-9);
+    assert.equal(num("nchoosek(5, 2)"), 10);
+    assert.equal(num("npr(5, 2)"), 20);
+    assert.equal(num("gcd(12, 18)"), 6);
+    assert.equal(num("mod(-3, 2)"), 1);
+    assert.ok(Math.abs(num("beta(2, 3)") - 1 / 12) < 1e-9);
+    assert.ok(Math.abs(num("zeta(2)") - Math.PI ** 2 / 6) < 1e-4);
+    assert.equal(num("mean([1 2 3 4])"), 2.5);
+    assert.equal(num("std([1 2 3])"), 1);
+    assert.equal(num("median([1 3 2])"), 2);
+    assert.ok(Math.abs(num("normcdf(0)") - 0.5) < 1e-6);
+    assert.ok(Math.abs(num("binopdf(2, 4, 0.5)") - 0.375) < 1e-12);
+    assert.equal(num("corr([1 2 3], [2 4 6])"), 1);
+    assert.equal(num("kinetic(2, 3)"), 9);
+    assert.equal(num("current(12, 4)"), 3);
+    assert.equal(num("grav(1, 1, 1)"), num("G"));
+    const z = mat("zscore([1 2 3])");
+    assert.deepEqual(Array.from(z.d).map((v) => Math.round(v * 1e9) / 1e9), [-1, 0, 1]);
+    const cols = mat("mean([1 3; 2 4])");
+    assert.deepEqual(Array.from(cols.d), [1.5, 3.5]);
+    assert.equal(num("quantile([1 2 3 4], 0.5)"), 2.5);
+  });
+
   it("reports syntax and size errors", () => {
     const bad = runScript("2 +", new Map(), engine);
     assert.equal(bad.ok, false);

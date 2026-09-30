@@ -1,6 +1,7 @@
 import { Asm, F64, I32, OP, WasmModule } from "./wasm-module.ts";
 import { type Engine, type Val, cloneVal, matrix, scalar, valData } from "./engine.ts";
 import { definiteIntegral, derivative, sampleSurface, type Plot } from "./calculus.ts";
+import { AGG, CONSTANTS, ELEM_SPEC, MAX2, MIN2, foldCall, runAgg, evalElem, type ElemSpec } from "./library.ts";
 
 export class MatlabError extends Error {
   constructor(message: string) {
@@ -316,8 +317,8 @@ class Parser {
 
 function getVar(scope: Map<string, Val>, name: string): Val | undefined {
   if (scope.has(name)) return scope.get(name);
-  if (name === "pi") return scalar(Math.PI);
-  if (name === "e") return scalar(Math.E);
+  const known = CONSTANTS[name];
+  if (known !== undefined) return scalar(known);
   return undefined;
 }
 
@@ -368,6 +369,8 @@ const IMPORTS: ImportSpec[] = [
   { name: "ddot", params: [I32, I32, I32, I32, I32], results: [F64] },
   { name: "dnrm2", params: [I32, I32, I32], results: [F64] },
   { name: "nthroot", params: [I32, I32, I32, I32], results: [] },
+  { name: "host", params: [I32, I32, I32, I32, I32, I32, I32], results: [] },
+  { name: "agg", params: [I32, I32, I32, I32, I32, I32, I32], results: [] },
 ];
 
 class Compiler {
@@ -748,6 +751,113 @@ class Compiler {
     this.call("blit");
   }
 
+  private hostElem(op: number, slots: Slot[]): Slot {
+    let r = 1;
+    let c = 1;
+    for (const slot of slots) {
+      const sn = slot.r * slot.c;
+      const bn = r * c;
+      if (sn === bn) continue;
+      if (bn === 1) {
+        r = slot.r;
+        c = slot.c;
+        continue;
+      }
+      if (sn !== 1) this.fail("Size Mismatch");
+    }
+    const shaped = slots.map((slot) => (slot.r === r && slot.c === c ? slot : this.splat(slot, r, c)));
+    const n = r * c;
+    const dest = this.alloc(n);
+    const ptrs = [0, 0, 0, 0];
+    shaped.forEach((slot, i) => {
+      ptrs[i] = slot.ptr;
+    });
+    this.asm.i32(op);
+    this.asm.i32(n);
+    for (const ptr of ptrs) this.asm.i32(ptr);
+    this.asm.i32(dest);
+    this.call("host");
+    return { ptr: dest, r, c };
+  }
+
+  private agg(op: number, a: Slot, y: number, yn: number, dest: number) {
+    this.asm.i32(op);
+    this.asm.i32(a.r);
+    this.asm.i32(a.c);
+    this.asm.i32(a.ptr);
+    this.asm.i32(y);
+    this.asm.i32(yn);
+    this.asm.i32(dest);
+    this.call("agg");
+  }
+
+  private reduceCols(op: number, a: Slot): Slot {
+    const destN = a.r === 1 || a.c === 1 ? 1 : a.c;
+    const dest = this.alloc(destN);
+    this.agg(op, a, 0, 0, dest);
+    return { ptr: dest, r: 1, c: destN };
+  }
+
+  private elemSpec(spec: ElemSpec, args: Expr[]): Slot {
+    if (args.length < spec.min) this.fail("Too Few Arguments");
+    if (args.length > spec.max) this.fail("Too Many Arguments");
+    const slots = args.map((arg) => this.emit(arg));
+    const missing = spec.max - args.length;
+    const defaults = spec.defaults ?? [];
+    for (let i = defaults.length - missing; i < defaults.length; i++) {
+      slots.push({ ptr: this.storeLiteral(defaults[i]!), r: 1, c: 1 });
+    }
+    return this.hostElem(spec.op, slots);
+  }
+
+  private emitLib(id: string, args: Expr[]): Slot | null {
+    const spec = ELEM_SPEC[id];
+    if (spec) return this.elemSpec(spec, args);
+    if ((id === "min" || id === "max") && args.length === 2) {
+      return this.hostElem(id === "min" ? MIN2 : MAX2, [this.emit(args[0]!), this.emit(args[1]!)]);
+    }
+    if (id === "std" || id === "var") {
+      if (args.length < 1 || args.length > 2) this.fail("Too Few Arguments");
+      let pop = 0;
+      if (args.length === 2) {
+        pop = this.asInt(args[1]!, "Bad Flag");
+        if (pop !== 0 && pop !== 1) this.fail("Bad Flag");
+      }
+      const op = id === "std" ? (pop ? AGG.stdPop : AGG.std) : pop ? AGG.varPop : AGG.variance;
+      return this.reduceCols(op, this.emit(args[0]!));
+    }
+    if (id === "mean" || id === "median" || id === "prod" || id === "min" || id === "max") {
+      if (args.length !== 1) this.fail("Too Few Arguments");
+      const op = id === "mean" ? AGG.mean : id === "median" ? AGG.median : id === "prod" ? AGG.prod : id === "min" ? AGG.min : AGG.max;
+      return this.reduceCols(op, this.emit(args[0]!));
+    }
+    if (id === "zscore") {
+      if (args.length !== 1) this.fail("Too Few Arguments");
+      const a = this.emit(args[0]!);
+      const dest = this.alloc(a.r * a.c);
+      this.agg(AGG.zscore, a, 0, 0, dest);
+      return { ptr: dest, r: a.r, c: a.c };
+    }
+    if (id === "cov" || id === "corr") {
+      if (args.length !== 2) this.fail("Too Few Arguments");
+      const a = this.emit(args[0]!);
+      const b = this.emit(args[1]!);
+      if (a.r * a.c !== b.r * b.c) this.fail("Size Mismatch");
+      const dest = this.alloc(1);
+      this.agg(id === "cov" ? AGG.cov : AGG.corr, a, b.ptr, b.r * b.c, dest);
+      return { ptr: dest, r: 1, c: 1 };
+    }
+    if (id === "quantile") {
+      if (args.length !== 2) this.fail("Too Few Arguments");
+      const data = this.emit(args[0]!);
+      const p = this.emit(args[1]!);
+      const dest = this.alloc(p.r * p.c);
+      this.agg(AGG.quantile, data, p.ptr, p.r * p.c, dest);
+      return { ptr: dest, r: p.r, c: p.c };
+    }
+    return null;
+  }
+
   private asInt(e: Expr, label: string): number {
     const n = foldScalar(e, this.scope);
     if (n === null || !Number.isFinite(n) || Math.abs(n - Math.round(n)) > 1e-8) this.fail(label);
@@ -759,6 +869,8 @@ class Compiler {
     if (id === "diff" || id === "integ" || id === "plot" || id === "surf") {
       this.fail(`${id} stands alone`);
     }
+    const lib = this.emitLib(id, args);
+    if (lib) return lib;
     if (id in UNOP) {
       if (args.length !== 1) this.fail("Too Few Arguments");
       return this.unop(this.emit(args[0]!), UNOP[id]!);
@@ -970,6 +1082,8 @@ function fold(e: Expr, scope: Map<string, Val>): number {
       const args = e.args.map((a) => fold(a, scope));
       if (name === "nthroot" && args.length === 2) return realNthRoot(args[0] ?? NaN, args[1] ?? NaN);
       if (name === "cbrt" && args.length === 1) return realNthRoot(args[0] ?? NaN, 3);
+      const lib = foldCall(name, args);
+      if (lib !== undefined) return lib;
       const fn = FOLD_FN[name];
       if (fn && args.length === 1) return fn(args[0] ?? NaN);
       throw new Error("call");
@@ -1009,6 +1123,23 @@ function execute(bytes: Uint8Array, engine: Engine, slot: Slot): Val {
       };
       continue;
     }
+    if (spec.name === "host") {
+      blas.host = (op, count, a, b, c, d, yPtr) => {
+        const heap = new Float64Array(engine.memory.buffer);
+        const ptrs = [a, b, c, d].filter((ptr) => ptr !== 0).map((ptr) => (ptr >>> 0) / 8);
+        const yi = (yPtr >>> 0) / 8;
+        const n = count | 0;
+        for (let i = 0; i < n; i++) heap[yi + i] = evalElem(op | 0, ptrs.map((ptr) => heap[ptr + i] ?? NaN));
+      };
+      continue;
+    }
+    if (spec.name === "agg") {
+      blas.agg = (op, rows, cols, xPtr, yPtr, yn, dest) => {
+        const heap = new Float64Array(engine.memory.buffer);
+        runAgg(heap, op | 0, rows | 0, cols | 0, (xPtr >>> 0) / 8, yPtr ? (yPtr >>> 0) / 8 : 0, yn | 0, (dest >>> 0) / 8);
+      };
+      continue;
+    }
     const fn = (engine.exp as unknown as Record<string, (...args: number[]) => number | void>)[spec.name];
     if (!fn) throw new MatlabError(`Missing ${spec.name}`);
     blas[spec.name] = fn;
@@ -1034,44 +1165,7 @@ function realNthRoot(x: number, n: number): number {
   return x < 0 ? -mag : mag;
 }
 
-export const FUNCTIONS: { group: string; name: string; args: string; about: string; example: string }[] = [
-  { group: "Roots", name: "nthroot", args: "x, n", about: "Real nth root. Odd n keeps the sign.", example: "nthroot(-8, 3)" },
-  { group: "Roots", name: "cbrt", args: "x", about: "Cube root.", example: "cbrt(-27)" },
-  { group: "Roots", name: "sqrt", args: "x", about: "Square root.", example: "sqrt(2)" },
-  { group: "Elementary", name: "abs", args: "x", about: "Absolute value.", example: "abs(-4)" },
-  { group: "Elementary", name: "exp", args: "x", about: "e to the x.", example: "exp(1)" },
-  { group: "Elementary", name: "log", args: "x", about: "Natural log.", example: "log(e)" },
-  { group: "Elementary", name: "log10", args: "x", about: "Base-10 log.", example: "log10(100)" },
-  { group: "Elementary", name: "sin", args: "x", about: "Sine. Honors DEG or RAD.", example: "sin(pi/2)" },
-  { group: "Elementary", name: "cos", args: "x", about: "Cosine.", example: "cos(0)" },
-  { group: "Elementary", name: "tan", args: "x", about: "Tangent.", example: "tan(pi/4)" },
-  { group: "Elementary", name: "asin", args: "x", about: "Arcsine.", example: "asin(1)" },
-  { group: "Elementary", name: "acos", args: "x", about: "Arccosine.", example: "acos(1)" },
-  { group: "Elementary", name: "atan", args: "x", about: "Arctangent.", example: "atan(1)" },
-  { group: "Elementary", name: "sinh", args: "x", about: "Hyperbolic sine.", example: "sinh(0)" },
-  { group: "Elementary", name: "cosh", args: "x", about: "Hyperbolic cosine.", example: "cosh(0)" },
-  { group: "Elementary", name: "tanh", args: "x", about: "Hyperbolic tangent.", example: "tanh(0)" },
-  { group: "Elementary", name: "floor", args: "x", about: "Round toward −∞.", example: "floor(1.7)" },
-  { group: "Elementary", name: "ceil", args: "x", about: "Round toward +∞.", example: "ceil(1.2)" },
-  { group: "Elementary", name: "round", args: "x", about: "Round to nearest.", example: "round(1.5)" },
-  { group: "Linear algebra", name: "sum", args: "x", about: "Sum of a vector, or column sums of a matrix.", example: "sum([1 2 3])" },
-  { group: "Linear algebra", name: "norm", args: "x", about: "Euclidean norm.", example: "norm([3 4])" },
-  { group: "Linear algebra", name: "dot", args: "a, b", about: "Dot product.", example: "dot([1 2], [3 4])" },
-  { group: "Linear algebra", name: "cross", args: "a, b", about: "Cross product of length-3 vectors.", example: "cross([1;0;0], [0;1;0])" },
-  { group: "Linear algebra", name: "det", args: "A", about: "Determinant.", example: "det([1 2; 3 4])" },
-  { group: "Linear algebra", name: "inv", args: "A", about: "Inverse.", example: "inv([1 2; 3 4])" },
-  { group: "Linear algebra", name: "transpose", args: "A", about: "Transpose. A' is the same.", example: "[1 2; 3 4]'" },
-  { group: "Linear algebra", name: "trace", args: "A", about: "Trace.", example: "trace([1 2; 3 4])" },
-  { group: "Linear algebra", name: "diag", args: "x", about: "Diagonal of a matrix, or a diagonal matrix from a vector.", example: "diag([1 2 3])" },
-  { group: "Linear algebra", name: "eye", args: "n", about: "Identity. eye(r, c) is rectangular.", example: "eye(3)" },
-  { group: "Linear algebra", name: "zeros", args: "n", about: "Zero matrix. zeros(r, c) sets the shape.", example: "zeros(2, 3)" },
-  { group: "Linear algebra", name: "ones", args: "n", about: "Matrix of ones.", example: "ones(2)" },
-  { group: "Linear algebra", name: "size", args: "A", about: "Row count and column count.", example: "size([1 2; 3 4])" },
-  { group: "Calculus", name: "diff", args: "f, x", about: "Symbolic derivative. diff(f, x, a) evaluates it.", example: "diff(x^2, x)" },
-  { group: "Calculus", name: "integ", args: "f, x, a, b", about: "Definite integral from a to b.", example: "integ(sin(x), x, 0, pi)" },
-  { group: "Graphs", name: "plot", args: "f, x, a, b", about: "Graph y = f(x) from a to b.", example: "plot(sin(x), x, 0, 2*pi)" },
-  { group: "Graphs", name: "surf", args: "f, x, a, b, y, c, d", about: "Surface z = f(x, y).", example: "surf(x^2-y^2, x, -2, 2, y, -2, 2)" },
-];
+export { FUNCTIONS } from "./library.ts";
 
 export function parseDisplay(src: string): Expr | null {
   const trimmed = src.trim();
