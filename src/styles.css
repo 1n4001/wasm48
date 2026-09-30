@@ -75,13 +75,15 @@
   }
   .math-host {
     display: inline-block;
-    max-width: 100%;
-    overflow-x: auto;
     vertical-align: middle;
+    overflow: visible;
   }
   .math-host math,
-  .lcd math {
+  .math-host mtable,
+  .lcd math,
+  .lcd mtable {
     color: inherit;
+    overflow: visible;
     font-family: "STIX Two Math", "Cambria Math", "Latin Modern Math", serif;
     font-size: 1.2em;
   }

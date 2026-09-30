@@ -106,9 +106,9 @@ export function Calculator() {
           </div>
           <p className="pb-0.5 text-right text-2xs tracking-[0.18em] text-legend-r">MATLAB · DGEMM</p>
         </header>
-        <div className="flex items-start gap-3">
-          <div className="lcd-well flex min-w-0 flex-1">
-            <div className="lcd flex min-h-full w-full flex-col gap-2 px-3 py-2">
+        <div className="flex items-stretch gap-3">
+          <div className="lcd-well flex min-h-full min-w-0 flex-1">
+            <div className="lcd flex h-full min-h-full w-full flex-col gap-2 px-3 py-2">
               <div className="flex items-center justify-between text-xs tracking-widest">
                 <span className="flex gap-3">
                   <Ann on={face.shift === "l"} text="LS" />
@@ -117,14 +117,14 @@ export function Calculator() {
                 </span>
                 <span className="font-bold">{face.angle}</span>
               </div>
-              <div ref={stackRef} className="flex max-h-80 min-h-36 flex-1 flex-col gap-2 overflow-auto text-base leading-tight tabular-nums">
+              <div ref={stackRef} className="flex flex-1 flex-col justify-end gap-2 text-base leading-tight">
                 {face.levels.map((row) => (
                   <div key={row.level}>
                     <div className="text-left">
                       <span className="text-lcd-dim">{row.level}: </span>
                       <MathView source={row.expr} />
                     </div>
-                    <div className="flex justify-end overflow-x-auto">
+                    <div className="flex justify-end">
                       <MathView source={row.text} />
                     </div>
                   </div>
@@ -227,7 +227,7 @@ export function Calculator() {
                   className="flex w-full items-baseline justify-between gap-3 bg-body px-3 py-2 text-left"
                 >
                   <span className="font-mono text-legend-l">{row.name}</span>
-                  <span className="min-w-0 overflow-x-auto text-ink">
+                  <span className="min-w-0 text-ink">
                     <MathView source={row.text} />
                   </span>
                 </button>
