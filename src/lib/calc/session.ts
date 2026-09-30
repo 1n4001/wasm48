@@ -155,7 +155,7 @@ type Snap = { stack: Val[]; scope: Map<string, Val>; last: Val | null };
 export type LogLine = { name: string; text: string };
 
 export type FaceState = {
-  levels: { level: number; text: string }[];
+  levels: { level: number; expr: string; text: string }[];
   matrix: string | null;
   command: string;
   message: string | null;
@@ -191,6 +191,7 @@ export class Session {
   lastBytes: Uint8Array<ArrayBufferLike> = new Uint8Array();
   log: LogLine[] = [];
   private last: Val | null = null;
+  private exprs = new WeakMap<Val, string>();
   private undoStack: Snap[] = [];
   private listeners = new Set<() => void>();
 
@@ -209,9 +210,10 @@ export class Session {
 
   face(): FaceState {
     const size = this.stack.length;
-    const levels = [4, 3, 2, 1].map((level) => ({
-      level,
-      text: size >= level ? formatShort(this.stack[size - level]!) : "",
+    const levels = this.stack.map((value, index) => ({
+      level: size - index,
+      expr: this.exprOf(value),
+      text: formatVal(value),
     }));
     const top = this.stack[size - 1];
     const matrix = top && top.t === "m" && top.r * top.c > 1 ? formatVal(top) : null;
@@ -311,12 +313,17 @@ export class Session {
       if (!raw) return;
       const data = JSON.parse(raw) as {
         stack: Serialized[];
+        exprs?: string[];
         scope: [string, Serialized][];
         line: string;
         angle: 0 | 1;
         menu: number;
       };
-      this.stack = data.stack.map(hydrate);
+      this.stack = data.stack.map((value, index) => {
+        const hydrated = hydrate(value);
+        this.exprs.set(hydrated, data.exprs?.[index] || formatShort(hydrated));
+        return hydrated;
+      });
       this.scope = new Map(data.scope.map(([name, value]) => [name, hydrate(value)]));
       this.line = data.line ?? "";
       this.menu = data.menu ?? 0;
@@ -329,6 +336,7 @@ export class Session {
   persist() {
     const data = {
       stack: this.stack.map(dehydrate),
+      exprs: this.stack.map((value) => this.exprOf(value)),
       scope: [...this.scope.entries()].map(([name, value]) => [name, dehydrate(value)]),
       line: this.line,
       angle: this.engine.getAngle(),
@@ -554,7 +562,7 @@ export class Session {
         return;
       }
       this.checkpoint();
-      this.stack.push(cloneVal(this.last));
+      this.stack.push(this.keep(this.last));
       return;
     }
     if (op === "dup") {
@@ -563,7 +571,7 @@ export class Session {
         return;
       }
       this.checkpoint();
-      this.stack.push(cloneVal(this.stack[this.stack.length - 1]!));
+      this.stack.push(this.keep(this.stack[this.stack.length - 1]!));
       return;
     }
     if (op === "drop") {
@@ -584,7 +592,7 @@ export class Session {
       const x = this.stack.pop()!;
       const y = this.stack.pop()!;
       if (op === "swap") this.stack.push(x, y);
-      else this.stack.push(y, x, cloneVal(y));
+      else this.stack.push(y, x, this.keep(y));
       return;
     }
     if (this.stack.length < 3) {
@@ -611,7 +619,9 @@ export class Session {
     this.checkpoint();
     const x = this.stack.pop()!;
     const y = this.stack.pop()!;
-    this.last = cloneVal(x);
+    const yExpr = this.exprOf(y);
+    const xExpr = this.exprOf(x);
+    this.last = this.keep(x);
     const scope = new Map(this.scope);
     scope.set("__y", y);
     scope.set("__x", x);
@@ -622,7 +632,7 @@ export class Session {
       return;
     }
     this.note(result.listing, result.bytes);
-    this.stack.push(cloneVal(result.pushed[0]));
+    this.stack.push(this.tag(result.pushed[0], infix(op, yExpr, xExpr)));
   }
 
   private applyFn(expr: string, insert: string) {
@@ -641,7 +651,8 @@ export class Session {
     }
     this.checkpoint();
     const x = this.stack.pop()!;
-    this.last = cloneVal(x);
+    const xExpr = this.exprOf(x);
+    this.last = this.keep(x);
     const scope = new Map(this.scope);
     scope.set("__x", x);
     const result = runScript(expr, scope, this.engine);
@@ -651,7 +662,7 @@ export class Session {
       return;
     }
     this.note(result.listing, result.bytes);
-    this.stack.push(cloneVal(result.pushed[0]));
+    this.stack.push(this.tag(result.pushed[0], unaryExpr(expr, xExpr)));
   }
 
   private execSource(src: string, push: boolean): boolean {
@@ -669,7 +680,9 @@ export class Session {
       this.log = [...this.log, { name: row.name, text: formatVal(row.value) }].slice(-8);
     }
     if (push) {
-      for (const value of result.pushed) this.stack.push(cloneVal(value));
+      result.pushed.forEach((value, index) => {
+        this.stack.push(this.tag(value, result.pushedExpr[index] ?? trimmed));
+      });
     }
     return true;
   }
@@ -678,6 +691,22 @@ export class Session {
     this.listing = listing;
     this.bytes = bytes.byteLength;
     this.lastBytes = bytes;
+  }
+
+  private exprOf(value: Val): string {
+    return this.exprs.get(value) ?? formatShort(value);
+  }
+
+  private keep(value: Val): Val {
+    const copy = cloneVal(value);
+    this.exprs.set(copy, this.exprOf(value));
+    return copy;
+  }
+
+  private tag(value: Val, expr: string): Val {
+    const copy = cloneVal(value);
+    this.exprs.set(copy, expr);
+    return copy;
   }
 
   private checkpoint() {
@@ -703,9 +732,9 @@ export class Session {
     const scope = new Map<string, Val>();
     for (const [name, value] of this.scope) scope.set(name, cloneVal(value));
     return {
-      stack: this.stack.map(cloneVal),
+      stack: this.stack.map((value) => this.keep(value)),
       scope,
-      last: this.last ? cloneVal(this.last) : null,
+      last: this.last ? this.keep(this.last) : null,
     };
   }
 
@@ -728,6 +757,66 @@ function dehydrate(v: Val): Serialized {
 function hydrate(v: Serialized): Val {
   if (v.t === "s") return { t: "s", v: v.v };
   return { t: "m", r: v.r, c: v.c, d: new Float64Array(v.d) };
+}
+
+function infix(op: string, y: string, x: string): string {
+  return `${side(y, op, "L")}${op}${side(x, op, "R")}`;
+}
+
+function unaryExpr(template: string, inner: string): string {
+  if (template === "-(__x)") return topPrec(inner) < 5 ? `-(${inner})` : `-${inner}`;
+  if (template === "(__x)'") return `${topPrec(inner) < 4 ? `(${inner})` : inner}'`;
+  if (template === "(__x)^2") return `${side(inner, "^", "L")}^2`;
+  if (template === "1/(__x)") return `1/${side(inner, "/", "R")}`;
+  const call = /^([A-Za-z]\w*)\(__x\)$/.exec(template);
+  if (call) return `${call[1]}(${inner})`;
+  return template.replaceAll("__x", inner);
+}
+
+const BIN_PREC: Record<string, number> = {
+  "+": 1,
+  "-": 1,
+  "*": 2,
+  "/": 2,
+  "\\": 2,
+  ".*": 2,
+  "./": 2,
+  ".\\": 2,
+  "^": 3,
+  ".^": 3,
+};
+
+function side(text: string, op: string, edge: "L" | "R"): string {
+  const need = BIN_PREC[op] ?? 1;
+  const have = topPrec(text);
+  const rightAssoc = op === "^" || op === ".^";
+  if (have < need) return `(${text})`;
+  if (have === need && edge === "R" && (op === "-" || op === "/" || op === "\\" || op === "./" || op === ".\\" || rightAssoc)) {
+    return `(${text})`;
+  }
+  if (have === need && edge === "L" && rightAssoc) return `(${text})`;
+  return text;
+}
+
+function topPrec(expr: string): number {
+  let depth = 0;
+  let min = 5;
+  for (let i = 0; i < expr.length; i++) {
+    const c = expr[i]!;
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth = Math.max(0, depth - 1);
+    else if (depth === 0) {
+      const two = expr.slice(i, i + 2);
+      if (two === ".*" || two === "./" || two === ".\\" || two === ".^") {
+        min = Math.min(min, BIN_PREC[two] ?? 2);
+        i++;
+      } else if ((c === "+" || c === "-") && i > 0 && !"([+-*/\\^".includes(expr[i - 1]!)) {
+        min = Math.min(min, 1);
+      } else if (c === "*" || c === "/" || c === "\\") min = Math.min(min, 2);
+      else if (c === "^") min = Math.min(min, 3);
+    }
+  }
+  return min;
 }
 
 export function bootSession(): Session {

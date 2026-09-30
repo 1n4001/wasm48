@@ -82,6 +82,27 @@
     gap: 0.2rem;
     width: calc(6 * 2.85rem + 5 * 0.22rem);
   }
+  .keypad.is-collapsed {
+    width: auto;
+  }
+  .key-toggle {
+    width: 100%;
+    margin-bottom: 0.15rem;
+    border-radius: var(--radius-key);
+    background: var(--color-key);
+    color: var(--color-key-ink);
+    padding: 0.35rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .keypad.is-collapsed .key-toggle {
+    writing-mode: vertical-rl;
+    width: auto;
+    margin: 0;
+    padding: 0.7rem 0.35rem;
+  }
   .key-row {
     display: grid;
     flex: none;

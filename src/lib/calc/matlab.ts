@@ -954,6 +954,7 @@ export type ScriptResult =
       ok: true;
       printed: Printed[];
       pushed: Val[];
+      pushedExpr: string[];
       listing: string;
       bytes: Uint8Array;
     }
@@ -987,6 +988,7 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
   if (!stmts.length) return { ok: false, error: "Syntax Error" };
   const printed: Printed[] = [];
   const pushed: Val[] = [];
+  const pushedExpr: string[] = [];
   const listings: string[] = [];
   let bytes: Uint8Array<ArrayBufferLike> = new Uint8Array();
   try {
@@ -1004,13 +1006,87 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
         if (!stmt.silent) {
           printed.push({ name: "ans", value });
           pushed.push(value);
+          pushedExpr.push(exprText(stmt.expr));
         }
       }
     }
   } catch (err) {
     return { ok: false, error: err instanceof MatlabError ? err.message : "Bad Size" };
   }
-  return { ok: true, printed, pushed, listing: listings.join("\n\n"), bytes };
+  return { ok: true, printed, pushed, pushedExpr, listing: listings.join("\n\n"), bytes };
+}
+
+function exprText(e: Expr): string {
+  switch (e.k) {
+    case "num":
+      return String(e.v);
+    case "name":
+      return e.s;
+    case "unary":
+      return `-${exprAtom(exprText(e.a))}`;
+    case "bin":
+      return `${exprSide(exprText(e.a), e.op, "L")}${e.op}${exprSide(exprText(e.b), e.op, "R")}`;
+    case "trans":
+      return `${exprAtom(exprText(e.a))}'`;
+    case "call":
+      return `${e.name}(${e.args.map(exprText).join(",")})`;
+    case "mat":
+      return `[${e.rows.map((row) => row.map(exprText).join(" ")).join("; ")}]`;
+    case "colon":
+      return e.step ? `${exprText(e.a)}:${exprText(e.step)}:${exprText(e.b)}` : `${exprText(e.a)}:${exprText(e.b)}`;
+    default:
+      return "";
+  }
+}
+
+const BIN_PREC: Record<string, number> = {
+  "+": 1,
+  "-": 1,
+  "*": 2,
+  "/": 2,
+  "\\": 2,
+  ".*": 2,
+  "./": 2,
+  ".\\": 2,
+  "^": 3,
+  ".^": 3,
+};
+
+function exprSide(text: string, op: string, side: "L" | "R"): string {
+  const need = BIN_PREC[op] ?? 1;
+  const have = topPrec(text);
+  const rightAssoc = op === "^" || op === ".^";
+  if (have < need) return `(${text})`;
+  if (have === need && side === "R" && (op === "-" || op === "/" || op === "\\" || op === "./" || op === ".\\" || rightAssoc)) {
+    return `(${text})`;
+  }
+  if (have === need && side === "L" && rightAssoc) return `(${text})`;
+  return text;
+}
+
+function exprAtom(text: string): string {
+  return topPrec(text) < 4 ? `(${text})` : text;
+}
+
+function topPrec(expr: string): number {
+  let depth = 0;
+  let min = 5;
+  for (let i = 0; i < expr.length; i++) {
+    const c = expr[i]!;
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth = Math.max(0, depth - 1);
+    else if (depth === 0) {
+      const two = expr.slice(i, i + 2);
+      if (two === ".*" || two === "./" || two === ".\\" || two === ".^") {
+        min = Math.min(min, BIN_PREC[two] ?? 2);
+        i++;
+      } else if ((c === "+" || c === "-") && i > 0 && !"([+-*/\\^".includes(expr[i - 1]!)) {
+        min = Math.min(min, 1);
+      } else if (c === "*" || c === "/" || c === "\\") min = Math.min(min, 2);
+      else if (c === "^") min = Math.min(min, 3);
+    }
+  }
+  return min;
 }
 
 export const EXAMPLES: { name: string; source: string }[] = [

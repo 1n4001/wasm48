@@ -21,6 +21,25 @@ describe("rpn session", () => {
     assert.ok(session.bytes > 40);
   });
 
+  it("shows an unlimited stack with infix over the result", () => {
+    const session = bootSession();
+    for (const id of ["1", "enter", "2", "enter", "add"]) session.press(id);
+    const levels = session.face().levels;
+    assert.equal(levels.length, 1);
+    assert.equal(levels[0]?.level, 1);
+    assert.equal(levels[0]?.expr, "1+2");
+    assert.equal(levels[0]?.text, "3");
+
+    for (const id of ["4", "enter", "mul"]) session.press(id);
+    const next = session.face().levels.at(-1);
+    assert.equal(next?.expr, "(1+2)*4");
+    assert.equal(next?.text, "12");
+
+    session.press("5");
+    session.press("enter");
+    assert.equal(session.face().levels.length, 2);
+  });
+
   it("multiplies matrices through the command line", () => {
     const session = bootSession();
     for (const ch of "[1 2; 3 4]*[5 6; 7 8]") {

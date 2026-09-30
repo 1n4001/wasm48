@@ -5,7 +5,7 @@ const STARTER = "A = [1 2; 3 4]\nb = [1; 0]\nA\\b";
 
 function emptyFace(): FaceState {
   return {
-    levels: [4, 3, 2, 1].map((level) => ({ level, text: "" })),
+    levels: [],
     matrix: null,
     command: "",
     message: null,
@@ -26,6 +26,8 @@ export function Calculator() {
   const sessionRef = useRef<Session | null>(null);
   const [face, setFace] = useState<FaceState>(emptyFace);
   const [source, setSource] = useState(STARTER);
+  const [keysOpen, setKeysOpen] = useState(true);
+  const stackRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const session = bootSession();
@@ -78,6 +80,11 @@ export function Calculator() {
     };
   }, []);
 
+  useEffect(() => {
+    const el = stackRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [face.levels]);
+
   const hit = (id: string) => {
     sessionRef.current?.press(id);
   };
@@ -88,7 +95,7 @@ export function Calculator() {
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-3">
-      <section className="device flex w-max max-w-full flex-col gap-2 p-3" data-shift={face.shift} aria-label="Caliber 48">
+      <section className="device flex w-full flex-col gap-2 p-3" data-shift={face.shift} aria-label="Caliber 48">
         <header className="flex items-end justify-between px-1">
           <div>
             <p className="text-xs tracking-[0.28em] text-muted">CALIBER</p>
@@ -96,8 +103,8 @@ export function Calculator() {
           </div>
           <p className="pb-0.5 text-right text-2xs tracking-[0.18em] text-legend-r">MATLAB · DGEMM</p>
         </header>
-        <div className="flex items-stretch gap-3">
-          <div className="lcd-well flex min-h-0 min-w-[18rem] flex-1">
+        <div className="flex items-start gap-3">
+          <div className="lcd-well flex min-w-0 flex-1">
             <div className="lcd flex min-h-full w-full flex-col gap-2 px-3 py-2">
               <div className="flex items-center justify-between text-xs tracking-widest">
                 <span className="flex gap-3">
@@ -107,18 +114,18 @@ export function Calculator() {
                 </span>
                 <span className="font-bold">{face.angle}</span>
               </div>
-              <div className="flex flex-1 flex-col justify-end gap-1 text-lg leading-tight tabular-nums">
+              <div ref={stackRef} className="flex max-h-80 min-h-36 flex-1 flex-col gap-2 overflow-auto text-base leading-tight tabular-nums">
                 {face.levels.map((row) => (
-                  <div key={row.level} className="grid grid-cols-[1.6rem_1fr] gap-2">
-                    <span className="text-lcd-dim">{row.level}:</span>
-                    <span className="truncate text-right">{row.text}</span>
+                  <div key={row.level}>
+                    <div className="text-left">
+                      <span className="text-lcd-dim">{row.level}: </span>
+                      {row.expr}
+                    </div>
+                    <pre className="text-right whitespace-pre">{row.text}</pre>
                   </div>
                 ))}
               </div>
-              {face.matrix ? (
-                <pre className="max-h-40 overflow-auto text-right text-sm leading-snug whitespace-pre">{face.matrix}</pre>
-              ) : null}
-              <div className="min-h-6 text-right text-base">
+              <div className="min-h-6 text-left text-base">
                 {face.message ? (
                   <span className="text-danger">{face.message}</span>
                 ) : face.command ? (
@@ -137,25 +144,35 @@ export function Calculator() {
               </div>
             </div>
           </div>
-          <div className="keypad">
-            {KEY_ROWS.map((row) => (
-              <div key={row.map((key) => key.id).join()} className="key-row">
-                {row.map((key) => (
-                  <div key={key.id} className={key.span === 2 ? "key-slot span-2" : "key-slot"}>
-                    {key.legend ? (
-                      <div className="legends">
-                        <span className="legend-l">{key.legendL ?? ""}</span>
-                        <span className="legend-r">{key.legendR ?? ""}</span>
+          <div className={keysOpen ? "keypad" : "keypad is-collapsed"}>
+            <button
+              type="button"
+              className="key-toggle"
+              aria-expanded={keysOpen}
+              onClick={() => setKeysOpen((open) => !open)}
+            >
+              {keysOpen ? "Hide keys" : "Keys"}
+            </button>
+            {keysOpen
+              ? KEY_ROWS.map((row) => (
+                  <div key={row.map((key) => key.id).join()} className="key-row">
+                    {row.map((key) => (
+                      <div key={key.id} className={key.span === 2 ? "key-slot span-2" : "key-slot"}>
+                        {key.legend ? (
+                          <div className="legends">
+                            <span className="legend-l">{key.legendL ?? ""}</span>
+                            <span className="legend-r">{key.legendR ?? ""}</span>
+                          </div>
+                        ) : null}
+                        <button type="button" className={`keycap keycap-${key.variant}`} onClick={() => hit(key.id)} aria-label={key.label}>
+                          <span>{key.label}</span>
+                          {key.alpha ? <span className="alpha-ch">{key.alpha}</span> : null}
+                        </button>
                       </div>
-                    ) : null}
-                    <button type="button" className={`keycap keycap-${key.variant}`} onClick={() => hit(key.id)} aria-label={key.label}>
-                      <span>{key.label}</span>
-                      {key.alpha ? <span className="alpha-ch">{key.alpha}</span> : null}
-                    </button>
+                    ))}
                   </div>
-                ))}
-              </div>
-            ))}
+                ))
+              : null}
           </div>
         </div>
       </section>
