@@ -1,0 +1,23 @@
+{
+  "name": "WASM48",
+  "short_name": "WASM48",
+  "id": "/wasm48/",
+  "start_url": "/wasm48/",
+  "scope": "/wasm48/",
+  "display": "standalone",
+  "background_color": "#121416",
+  "theme_color": "#121416",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

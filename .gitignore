@@ -4,5 +4,6 @@ screenshots/
 artifacts/
 .vercel/
 dist/
+dist-pages/
 *.log
 native/**/target/
