@@ -1,9 +1,9 @@
 import { type Engine, type Val, cloneVal, createEngine } from "./engine.ts";
 import { formatMath, formatShort, formatVal } from "./format.ts";
-import { EXAMPLES, runScript } from "./matlab.ts";
+import { EXAMPLES, FUNCTIONS, runScript } from "./matlab.ts";
 import type { PlotSpec } from "./matlab.ts";
 
-export { EXAMPLES };
+export { EXAMPLES, FUNCTIONS };
 
 type MenuAct =
   | { t: "stack"; op: "dup" | "drop" | "swap" | "over" | "rot" | "unrot" | "last" }
@@ -79,8 +79,8 @@ const MENUS: { title: string; items: MenuItem[] }[] = [
       { label: "INT", act: { t: "insert", s: "integ(" } },
       { label: "PLOT", act: { t: "insert", s: "plot(" } },
       { label: "SURF", act: { t: "insert", s: "surf(" } },
-      { label: "SIN", act: { t: "insert", s: "sin(" } },
-      { label: "EXP", act: { t: "insert", s: "exp(" } },
+      { label: "ROOT", act: { t: "insert", s: "nthroot(" } },
+      { label: "CBRT", act: { t: "insert", s: "cbrt(" } },
     ],
   },
 ];

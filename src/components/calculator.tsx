@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { EXAMPLES, KEY_ROWS, Session, bootSession, type FaceState } from "@/lib/calc/session";
+import { EXAMPLES, FUNCTIONS, KEY_ROWS, Session, bootSession, type FaceState } from "@/lib/calc/session";
 import { Graph } from "@/components/graph";
 import { MathView } from "@/components/math-view";
 
@@ -203,10 +203,6 @@ export function Calculator() {
               </button>
             ))}
           </div>
-          <p className="text-sm leading-relaxed text-muted">
-            diff(f, x) differentiates. diff(f, x, a) evaluates it at a. integ(f, x, a, b) integrates. plot(f, x, a, b)
-            and surf(f, x, a, b, y, c, d) draw the graph.
-          </p>
           {face.xFull ? (
             <pre className="max-h-36 overflow-auto bg-body p-3 font-mono text-sm leading-relaxed whitespace-pre text-ink">{face.xFull}</pre>
           ) : null}
@@ -231,6 +227,35 @@ export function Calculator() {
             ))}
           </ul>
         </div>
+      </section>
+      <section className="overflow-x-auto bg-body">
+        <h2 className="px-3 pt-3 text-sm tracking-[0.16em] text-muted">Functions</h2>
+        <table className="w-full text-left text-sm">
+          <thead className="text-xs tracking-[0.14em] text-muted">
+            <tr>
+              <th className="px-3 py-2 font-medium">Group</th>
+              <th className="px-3 py-2 font-medium">Call</th>
+              <th className="px-3 py-2 font-medium">What it does</th>
+              <th className="px-3 py-2 font-medium">Example</th>
+            </tr>
+          </thead>
+          <tbody>
+            {FUNCTIONS.map((row) => (
+              <tr key={`${row.name}-${row.args}`} className="border-t border-line">
+                <td className="px-3 py-2 text-muted">{row.group}</td>
+                <td className="px-3 py-2 font-mono text-legend-l">
+                  {row.name}({row.args})
+                </td>
+                <td className="px-3 py-2 text-ink">{row.about}</td>
+                <td className="px-3 py-2">
+                  <button type="button" className="font-mono text-legend-r" onClick={() => setSource(row.example)}>
+                    {row.example}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </section>
     </main>
   );

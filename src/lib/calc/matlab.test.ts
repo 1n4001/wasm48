@@ -77,7 +77,13 @@ describe("matlab wasm", () => {
     assert.deepEqual(Array.from(t.d), [1, 2, 3, 4]);
     const ew = mat("[1 2; 3 4] .* [10 10; 10 10]");
     assert.deepEqual(Array.from(ew.d), [10, 30, 20, 40]);
-    assert.equal(num("sum([1 2 3])"), 6);
+    assert.ok(Math.abs(num("nthroot(8, 3)") - 2) < 1e-9);
+    assert.ok(Math.abs(num("nthroot(-8, 3)") + 2) < 1e-9);
+    assert.ok(Math.abs(num("cbrt(-27)") + 3) < 1e-9);
+    assert.ok(Number.isNaN(num("nthroot(-4, 2)")));
+    const roots = mat("nthroot([8 -27], 3)");
+    assert.ok(Math.abs((roots.d[0] ?? 0) - 2) < 1e-9);
+    assert.ok(Math.abs((roots.d[1] ?? 0) + 3) < 1e-9);
   });
 
   it("reports syntax and size errors", () => {

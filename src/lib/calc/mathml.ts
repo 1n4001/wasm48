@@ -102,6 +102,12 @@ function renderCall(name: string, args: Expr[]): Piece {
   if (name === "sqrt" && x && args.length === 1) {
     return { xml: `<msqrt>${render(x).xml}</msqrt>`, prec: 6, atom: "other" };
   }
+  if (name === "cbrt" && x && args.length === 1) {
+    return { xml: `<mroot>${render(x).xml}<mn>3</mn></mroot>`, prec: 6, atom: "other" };
+  }
+  if (name === "nthroot" && x && y && args.length === 2) {
+    return { xml: `<mroot>${render(x).xml}${render(y).xml}</mroot>`, prec: 6, atom: "other" };
+  }
   if (name === "abs" && x && args.length === 1) {
     return { xml: `<mrow><mo>|</mo>${render(x).xml}<mo>|</mo></mrow>`, prec: 6, atom: "other" };
   }

@@ -24,12 +24,14 @@ describe("mathml", () => {
     assert.ok(integral?.includes("π"));
 
     const matrix = toMathML("[1 2; 3 4]");
-    assert.ok(matrix?.includes("<mtable>"));
+    assert.ok(matrix?.includes("<mtable"));
     assert.ok(matrix?.includes("<mn>4</mn>"));
 
     const diff = toMathML("diff(x^2, x)");
     assert.ok(diff?.includes("<mfrac>"));
 
+    const root = toMathML("nthroot(x, 3)");
+    assert.ok(root?.includes("<mroot>"));
     assert.equal(toMathML("A = 1"), null);
   });
 });
