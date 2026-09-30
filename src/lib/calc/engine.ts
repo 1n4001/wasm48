@@ -2,7 +2,8 @@ import { BLAS_B64 } from "./blas-bytes.ts";
 
 export type Val =
   | { t: "s"; v: number }
-  | { t: "m"; r: number; c: number; d: Float64Array };
+  | { t: "m"; r: number; c: number; d: Float64Array }
+  | { t: "sym"; text: string };
 
 type Exports = WebAssembly.Exports & {
   memory: WebAssembly.Memory;
@@ -76,10 +77,12 @@ export function matrix(r: number, c: number, d: Float64Array): Val {
 
 export function cloneVal(v: Val): Val {
   if (v.t === "s") return { t: "s", v: v.v };
+  if (v.t === "sym") return { t: "sym", text: v.text };
   return { t: "m", r: v.r, c: v.c, d: new Float64Array(v.d) };
 }
 
 export function valData(v: Val): { r: number; c: number; d: Float64Array } {
+  if (v.t === "sym") throw new Error("Symbolic");
   if (v.t === "s") return { r: 1, c: 1, d: new Float64Array([v.v]) };
   return { r: v.r, c: v.c, d: v.d };
 }

@@ -1,6 +1,7 @@
 import { type Engine, type Val, cloneVal, createEngine } from "./engine.ts";
-import { formatShort, formatVal } from "./format.ts";
+import { formatMath, formatShort, formatVal } from "./format.ts";
 import { EXAMPLES, runScript } from "./matlab.ts";
+import type { PlotSpec } from "./matlab.ts";
 
 export { EXAMPLES };
 
@@ -69,6 +70,17 @@ const MENUS: { title: string; items: MenuItem[] }[] = [
       { label: "E", act: { t: "insert", s: "e" } },
       { label: "CLR", act: { t: "clear" } },
       { label: "UNDO", act: { t: "undo" } },
+    ],
+  },
+  {
+    title: "CALC",
+    items: [
+      { label: "DIFF", act: { t: "insert", s: "diff(" } },
+      { label: "INT", act: { t: "insert", s: "integ(" } },
+      { label: "PLOT", act: { t: "insert", s: "plot(" } },
+      { label: "SURF", act: { t: "insert", s: "surf(" } },
+      { label: "SIN", act: { t: "insert", s: "sin(" } },
+      { label: "EXP", act: { t: "insert", s: "exp(" } },
     ],
   },
 ];
@@ -169,6 +181,7 @@ export type FaceState = {
   vars: { name: string; text: string }[];
   log: LogLine[];
   xFull: string;
+  plot: PlotSpec | null;
 };
 
 const STORE_KEY = "caliber48";
@@ -190,6 +203,7 @@ export class Session {
   bytes = 0;
   lastBytes: Uint8Array<ArrayBufferLike> = new Uint8Array();
   log: LogLine[] = [];
+  plot: PlotSpec | null = null;
   private last: Val | null = null;
   private exprs = new WeakMap<Val, string>();
   private undoStack: Snap[] = [];
@@ -213,7 +227,7 @@ export class Session {
     const levels = this.stack.map((value, index) => ({
       level: size - index,
       expr: this.exprOf(value),
-      text: formatVal(value),
+      text: formatMath(value),
     }));
     const top = this.stack[size - 1];
     const matrix = top && top.t === "m" && top.r * top.c > 1 ? formatVal(top) : null;
@@ -223,7 +237,7 @@ export class Session {
         : ["A", "B", "C", "D", "E", "F"];
     const vars = [...this.scope.entries()]
       .filter(([name]) => name !== "ans")
-      .map(([name, value]) => ({ name, text: formatShort(value) }));
+      .map(([name, value]) => ({ name, text: formatMath(value) }));
     return {
       levels,
       matrix,
@@ -238,7 +252,8 @@ export class Session {
       listing: this.listing,
       vars,
       log: this.log,
-      xFull: top ? formatVal(top) : "",
+      xFull: top && top.t !== "sym" ? formatVal(top) : "",
+      plot: this.plot,
     };
   }
 
@@ -676,6 +691,10 @@ export class Session {
       return false;
     }
     this.note(result.listing, result.bytes);
+    if (result.plot) {
+      this.plot = result.plot;
+      if (!result.pushed.length) this.message = "Plotted";
+    }
     for (const row of result.printed) {
       this.log = [...this.log, { name: row.name, text: formatVal(row.value) }].slice(-8);
     }
@@ -747,15 +766,18 @@ export class Session {
 
 type Serialized =
   | { t: "s"; v: number }
-  | { t: "m"; r: number; c: number; d: number[] };
+  | { t: "m"; r: number; c: number; d: number[] }
+  | { t: "sym"; text: string };
 
 function dehydrate(v: Val): Serialized {
   if (v.t === "s") return { t: "s", v: v.v };
+  if (v.t === "sym") return { t: "sym", text: v.text };
   return { t: "m", r: v.r, c: v.c, d: [...v.d] };
 }
 
 function hydrate(v: Serialized): Val {
   if (v.t === "s") return { t: "s", v: v.v };
+  if (v.t === "sym") return { t: "sym", text: v.text };
   return { t: "m", r: v.r, c: v.c, d: new Float64Array(v.d) };
 }
 

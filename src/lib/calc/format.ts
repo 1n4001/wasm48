@@ -15,6 +15,7 @@ export function formatNum(n: number): string {
 }
 
 export function formatVal(v: Val): string {
+  if (v.t === "sym") return v.text;
   if (v.t === "s") return formatNum(v.v);
   const cells: string[][] = [];
   const width = Array.from({ length: v.c }, () => 0);
@@ -30,7 +31,20 @@ export function formatVal(v: Val): string {
   return cells.map((row) => row.map((cell, j) => cell.padStart(width[j] ?? 0)).join("  ")).join("\n");
 }
 
+export function formatMath(v: Val): string {
+  if (v.t === "sym") return v.text;
+  if (v.t === "s") return formatNum(v.v);
+  const parts: string[] = [];
+  for (let i = 0; i < v.r; i++) {
+    const row: string[] = [];
+    for (let j = 0; j < v.c; j++) row.push(formatNum(v.d[i + j * v.r] ?? NaN));
+    parts.push(row.join(" "));
+  }
+  return `[${parts.join("; ")}]`;
+}
+
 export function formatShort(v: Val): string {
+  if (v.t === "sym") return v.text;
   if (v.t === "s") return formatNum(v.v);
   if (v.r * v.c > 6) return `[${v.r}×${v.c}]`;
   const parts: string[] = [];

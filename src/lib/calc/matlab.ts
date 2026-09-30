@@ -1,5 +1,6 @@
 import { Asm, F64, I32, OP, WasmModule } from "./wasm-module.ts";
 import { type Engine, type Val, cloneVal, matrix, scalar, valData } from "./engine.ts";
+import { definiteIntegral, derivative, sampleCurve, sampleSurface, type Plot } from "./calculus.ts";
 
 export class MatlabError extends Error {
   constructor(message: string) {
@@ -8,7 +9,7 @@ export class MatlabError extends Error {
   }
 }
 
-type Expr =
+export type Expr =
   | { k: "num"; v: number }
   | { k: "name"; s: string }
   | { k: "unary"; op: "-"; a: Expr }
@@ -437,6 +438,7 @@ class Compiler {
       case "name": {
         const v = getVar(this.scope, e.s);
         if (!v) this.fail(`Undefined Name '${e.s}'`);
+        if (v.t === "sym") this.fail("Symbolic");
         return this.slotFromVal(v);
       }
       case "unary": {
@@ -747,6 +749,9 @@ class Compiler {
 
   private callFn(name: string, args: Expr[]): Slot {
     const id = name.toLowerCase();
+    if (id === "diff" || id === "integ" || id === "plot" || id === "surf") {
+      this.fail(`${id} stands alone`);
+    }
     if (id in UNOP) {
       if (args.length !== 1) this.fail("Too Few Arguments");
       return this.unop(this.emit(args[0]!), UNOP[id]!);
@@ -938,8 +943,8 @@ function fold(e: Expr, scope: Map<string, Val>): number {
     case "call": {
       const name = e.name.toLowerCase();
       const args = e.args.map((a) => fold(a, scope));
-      if (name === "sqrt") return Math.sqrt(args[0] ?? NaN);
-      if (name === "abs") return Math.abs(args[0] ?? NaN);
+      const fn = FOLD_FN[name];
+      if (fn && args.length === 1) return fn(args[0] ?? NaN);
       throw new Error("call");
     }
     default:
@@ -949,12 +954,15 @@ function fold(e: Expr, scope: Map<string, Val>): number {
 
 export type Printed = { name: string; value: Val };
 
+export type PlotSpec = Plot;
+
 export type ScriptResult =
   | {
       ok: true;
       printed: Printed[];
       pushed: Val[];
       pushedExpr: string[];
+      plot: Plot | null;
       listing: string;
       bytes: Uint8Array;
     }
@@ -978,6 +986,19 @@ function execute(bytes: Uint8Array, engine: Engine, slot: Slot): Val {
   return matrix(slot.r, slot.c, data);
 }
 
+export function parseDisplay(src: string): Expr | null {
+  const trimmed = src.trim();
+  if (!trimmed) return null;
+  try {
+    const stmts = new Parser(lex(trimmed)).parseScript();
+    const stmt = stmts[0];
+    if (stmts.length !== 1 || !stmt || stmt.assign) return null;
+    return stmt.expr;
+  } catch {
+    return null;
+  }
+}
+
 export function runScript(src: string, scope: Map<string, Val>, engine: Engine): ScriptResult {
   let stmts: Stmt[];
   try {
@@ -990,9 +1011,26 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
   const pushed: Val[] = [];
   const pushedExpr: string[] = [];
   const listings: string[] = [];
+  let plot: Plot | null = null;
   let bytes: Uint8Array<ArrayBufferLike> = new Uint8Array();
   try {
     for (const stmt of stmts) {
+      const calc = calculusStmt(stmt.expr, scope);
+      if (calc) {
+        if (calc.plot) plot = calc.plot;
+        if (calc.value) {
+          if (stmt.assign) scope.set(stmt.assign, calc.value);
+          else {
+            scope.set("ans", calc.value);
+            if (!stmt.silent) {
+              printed.push({ name: stmt.assign ?? "ans", value: calc.value });
+              pushed.push(calc.value);
+              pushedExpr.push(exprText(stmt.expr));
+            }
+          }
+        }
+        continue;
+      }
       engine.resetArena();
       const compiled = new Compiler(engine, scope).finish(stmt.expr);
       const value = cloneVal(execute(compiled.bytes, engine, compiled.slot));
@@ -1013,7 +1051,7 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
   } catch (err) {
     return { ok: false, error: err instanceof MatlabError ? err.message : "Bad Size" };
   }
-  return { ok: true, printed, pushed, pushedExpr, listing: listings.join("\n\n"), bytes };
+  return { ok: true, printed, pushed, pushedExpr, plot, listing: listings.join("\n\n"), bytes };
 }
 
 function exprText(e: Expr): string {
@@ -1106,4 +1144,131 @@ export const EXAMPLES: { name: string; source: string }[] = [
     name: "sin(pi/2)",
     source: "sin(pi/2)",
   },
+  {
+    name: "d/dx x²",
+    source: "diff(x^2, x)",
+  },
+  {
+    name: "∫ sin",
+    source: "integ(sin(x), x, 0, pi)",
+  },
+  {
+    name: "plot sin",
+    source: "plot(sin(x), x, 0, 2*pi)",
+  },
+  {
+    name: "saddle",
+    source: "surf(x^2 - y^2, x, -2, 2, y, -2, 2)",
+  },
 ];
+
+const FOLD_FN: Record<string, (x: number) => number> = {
+  sin: Math.sin,
+  cos: Math.cos,
+  tan: Math.tan,
+  asin: Math.asin,
+  acos: Math.acos,
+  atan: Math.atan,
+  sinh: Math.sinh,
+  cosh: Math.cosh,
+  tanh: Math.tanh,
+  exp: Math.exp,
+  log: Math.log,
+  ln: Math.log,
+  log10: Math.log10,
+  sqrt: Math.sqrt,
+  abs: Math.abs,
+  floor: Math.floor,
+  ceil: Math.ceil,
+  round: Math.round,
+};
+
+function calculusStmt(expr: Expr, scope: Map<string, Val>): { value?: Val; plot?: Plot } | null {
+  if (expr.k !== "call") return null;
+  const name = expr.name.toLowerCase();
+  if (name !== "diff" && name !== "integ" && name !== "plot" && name !== "surf") return null;
+  if (name === "diff") {
+    if (expr.args.length < 2) throw new MatlabError("Too Few Arguments");
+    const variable = varName(expr.args[1]!);
+    let derived: Expr;
+    try {
+      derived = derivative(expr.args[0]!, variable);
+    } catch (err) {
+      throw new MatlabError(err instanceof Error ? err.message : "Cannot differentiate");
+    }
+    if (expr.args[2]) {
+      const at = numArg(expr.args[2], scope);
+      return { value: scalar(evalAt(derived, variable, at, scope)) };
+    }
+    if (derived.k === "num") return { value: scalar(derived.v) };
+    return { value: { t: "sym", text: exprText(derived) } };
+  }
+  if (name === "integ") {
+    if (expr.args.length !== 4) throw new MatlabError("Too Few Arguments");
+    const variable = varName(expr.args[1]!);
+    const a = numArg(expr.args[2]!, scope);
+    const b = numArg(expr.args[3]!, scope);
+    const value = definiteIntegral((x) => evalAt(expr.args[0]!, variable, x, scope), a, b);
+    return { value: scalar(value) };
+  }
+  if (name === "plot") {
+    if (expr.args.length !== 4) throw new MatlabError("Too Few Arguments");
+    const variable = varName(expr.args[1]!);
+    const a = numArg(expr.args[2]!, scope);
+    const b = numArg(expr.args[3]!, scope);
+    const curve = sampleCurve((x) => evalAt(expr.args[0]!, variable, x, scope), a, b);
+    return { plot: { kind: "xy", label: exprText(expr.args[0]!), xs: curve.xs, ys: curve.ys } };
+  }
+  if (expr.args.length !== 7) throw new MatlabError("Too Few Arguments");
+  const xv = varName(expr.args[1]!);
+  const x0 = numArg(expr.args[2]!, scope);
+  const x1 = numArg(expr.args[3]!, scope);
+  const yv = varName(expr.args[4]!);
+  const y0 = numArg(expr.args[5]!, scope);
+  const y1 = numArg(expr.args[6]!, scope);
+  const grid = sampleSurface((x, y) => evalAt2(expr.args[0]!, xv, x, yv, y, scope), x0, x1, y0, y1);
+  return { plot: { kind: "xyz", label: exprText(expr.args[0]!), xs: grid.xs, ys: grid.ys, zs: grid.zs } };
+}
+
+function varName(expr: Expr): string {
+  if (expr.k !== "name") throw new MatlabError("Need a variable");
+  return expr.s;
+}
+
+function numArg(expr: Expr, scope: Map<string, Val>): number {
+  try {
+    const n = fold(expr, scope);
+    if (!Number.isFinite(n)) throw new Error("bad");
+    return n;
+  } catch (err) {
+    if (err instanceof MatlabError) throw err;
+    throw new MatlabError("Bad bound");
+  }
+}
+
+function evalAt(expr: Expr, variable: string, x: number, scope: Map<string, Val>): number {
+  const next = new Map(scope);
+  next.set(variable, scalar(x));
+  try {
+    const y = fold(expr, next);
+    if (!Number.isFinite(y)) throw new Error("bad");
+    return y;
+  } catch (err) {
+    if (err instanceof MatlabError) throw err;
+    throw new MatlabError("Cannot evaluate");
+  }
+}
+
+function evalAt2(expr: Expr, xv: string, x: number, yv: string, y: number, scope: Map<string, Val>): number {
+  const next = new Map(scope);
+  next.set(xv, scalar(x));
+  next.set(yv, scalar(y));
+  try {
+    const z = fold(expr, next);
+    if (!Number.isFinite(z)) throw new Error("bad");
+    return z;
+  } catch (err) {
+    if (err instanceof MatlabError) throw err;
+    throw new MatlabError("Cannot evaluate");
+  }
+}

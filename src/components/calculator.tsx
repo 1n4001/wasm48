@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { EXAMPLES, KEY_ROWS, Session, bootSession, type FaceState } from "@/lib/calc/session";
+import { Graph } from "@/components/graph";
+import { MathView } from "@/components/math-view";
 
 const STARTER = "A = [1 2; 3 4]\nb = [1; 0]\nA\\b";
 
@@ -19,6 +21,7 @@ function emptyFace(): FaceState {
     vars: [],
     log: [],
     xFull: "",
+    plot: null,
   };
 }
 
@@ -119,9 +122,11 @@ export function Calculator() {
                   <div key={row.level}>
                     <div className="text-left">
                       <span className="text-lcd-dim">{row.level}: </span>
-                      {row.expr}
+                      <MathView source={row.expr} />
                     </div>
-                    <pre className="text-right whitespace-pre">{row.text}</pre>
+                    <div className="flex justify-end overflow-x-auto">
+                      <MathView source={row.text} />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -130,7 +135,7 @@ export function Calculator() {
                   <span className="text-danger">{face.message}</span>
                 ) : face.command ? (
                   <span>
-                    {face.command}
+                    <MathView source={face.command} />
                     <i className="lcd-caret" />
                   </span>
                 ) : null}
@@ -176,6 +181,7 @@ export function Calculator() {
           </div>
         </div>
       </section>
+      {face.plot ? <Graph plot={face.plot} /> : null}
       <section className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_minmax(16rem,0.7fr)]">
         <div className="flex min-w-0 flex-col gap-2">
           <h2 className="text-sm tracking-[0.16em] text-muted">SCRIPT</h2>
@@ -201,6 +207,10 @@ export function Calculator() {
               </button>
             ))}
           </div>
+          <p className="text-sm leading-relaxed text-muted">
+            diff(f, x) differentiates. diff(f, x, a) evaluates it at a. integ(f, x, a, b) integrates. plot(f, x, a, b)
+            and surf(f, x, a, b, y, c, d) draw the graph.
+          </p>
           {face.xFull ? (
             <pre className="max-h-36 overflow-auto bg-body p-3 font-mono text-sm leading-relaxed whitespace-pre text-ink">{face.xFull}</pre>
           ) : null}
@@ -217,7 +227,9 @@ export function Calculator() {
                   className="flex w-full items-baseline justify-between gap-3 bg-body px-3 py-2 text-left"
                 >
                   <span className="font-mono text-legend-l">{row.name}</span>
-                  <span className="truncate font-mono text-sm text-ink">{row.text}</span>
+                  <span className="min-w-0 overflow-x-auto text-ink">
+                    <MathView source={row.text} />
+                  </span>
                 </button>
               </li>
             ))}
