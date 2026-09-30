@@ -75,13 +75,18 @@
     font-family: var(--font-mono);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, black 18%, transparent);
   }
+  .keypad {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: 0.2rem;
+    width: calc(6 * 2.85rem + 5 * 0.22rem);
+  }
   .key-row {
     display: grid;
-    min-height: 2.65rem;
-    flex: 1 1 auto;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    grid-template-rows: minmax(1.6rem, 1fr);
-    gap: 0.15rem;
+    flex: none;
+    grid-template-columns: repeat(6, 2.85rem);
+    gap: 0.22rem;
   }
   .span-2 {
     grid-column: span 2;
@@ -89,10 +94,7 @@
   .key-slot {
     display: flex;
     min-width: 0;
-    min-height: 0;
-    height: 100%;
     flex-direction: column;
-    overflow: hidden;
   }
   .legends {
     display: flex;
@@ -122,13 +124,16 @@
   .keycap {
     position: relative;
     display: flex;
-    min-height: 1.7rem;
-    flex: 1 1 auto;
+    width: 100%;
+    height: 2.45rem;
+    min-height: 2.45rem;
+    flex: none;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     border-radius: var(--radius-key);
     padding: 0.05rem 0.15rem;
+    font-size: 1rem;
     font-weight: 700;
     letter-spacing: 0.03em;
     line-height: 1;
@@ -163,16 +168,27 @@
     background: var(--color-right);
     color: var(--color-right-ink);
   }
-  .keycap-menu {
-    background: var(--color-menu);
-    color: var(--color-menu-ink);
-    min-height: 0;
+  .lcd-menu {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    margin-inline: -0.75rem;
+    margin-bottom: -0.5rem;
+    border-top: 1px solid color-mix(in srgb, var(--color-lcd-ink) 28%, transparent);
   }
-  .key-nub {
-    width: 1.1rem;
-    height: 0.18rem;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--color-menu-ink) 35%, transparent);
+  .lcd-menu button {
+    min-height: 1.7rem;
+    padding: 0.35rem 0.15rem;
+    background: transparent;
+    color: var(--color-lcd-ink);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 1;
+  }
+  .lcd-menu button:hover,
+  .lcd-menu button:active {
+    background: color-mix(in srgb, var(--color-lcd-ink) 12%, transparent);
   }
   .alpha-ch {
     position: absolute;
