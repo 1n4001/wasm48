@@ -1,6 +1,6 @@
 import { Asm, F64, I32, OP, WasmModule } from "./wasm-module.ts";
 import { type Engine, type Val, cloneVal, matrix, scalar, valData } from "./engine.ts";
-import { definiteIntegral, derivative, sampleSurface, type Plot } from "./calculus.ts";
+import { definiteIntegral, derivative, sampleSurface, simplify, type Plot } from "./calculus.ts";
 import { AGG, CONSTANTS, ELEM_SPEC, MAX2, MIN2, foldCall, runAgg, evalElem, type ElemSpec } from "./library.ts";
 
 export class MatlabError extends Error {
@@ -1392,7 +1392,7 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
         continue;
       }
       const user = usesUserFn(stmt.expr, scope);
-      const expr = expandCalls(stmt.expr, scope);
+      let expr = expandCalls(stmt.expr, scope);
       const calc = calculusStmt(expr, scope);
       if (calc) {
         if (calc.plot) plot = calc.plot;
@@ -1410,17 +1410,22 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
         continue;
       }
       if (user && hasFree(expr, scope)) {
-        const value: Val = { t: "sym", text: exprText(expr) };
-        if (stmt.assign) {
-          scope.set(stmt.assign, value);
-          if (!stmt.silent) printed.push({ name: stmt.assign, value });
-        } else if (!stmt.silent) {
-          scope.set("ans", value);
-          printed.push({ name: "ans", value });
-          pushed.push(value);
-          pushedExpr.push(exprText(expr));
+        const simple = simplify(expr);
+        if (simple.k !== "num" && hasFree(simple, scope)) {
+          const text = exprText(simple);
+          const value: Val = { t: "sym", text };
+          if (stmt.assign) {
+            scope.set(stmt.assign, value);
+            if (!stmt.silent) printed.push({ name: stmt.assign, value });
+          } else if (!stmt.silent) {
+            scope.set("ans", value);
+            printed.push({ name: "ans", value });
+            pushed.push(value);
+            pushedExpr.push(text);
+          }
+          continue;
         }
-        continue;
+        expr = simple;
       }
       engine.resetArena();
       const compiled = new Compiler(engine, scope).finish(expr);

@@ -105,10 +105,10 @@ function diffCall(name: string, args: Expr[], v: string): Expr {
   throw new Error("Cannot differentiate");
 }
 
-function simplify(e: Expr): Expr {
+export function simplify(e: Expr): Expr {
   const s = simp(e);
   const n = constValue(s);
-  return n === null ? s : { k: "num", v: tidy(n) };
+  return n === null ? s : { k: "num", v: num(n) };
 }
 
 function simp(e: Expr): Expr {
@@ -119,7 +119,7 @@ function simp(e: Expr): Expr {
     case "unary": {
       const a = simp(e.a);
       if (a.k === "unary") return a.a;
-      if (a.k === "num") return { k: "num", v: -a.v };
+      if (a.k === "num") return { k: "num", v: num(-a.v) };
       return { k: "unary", op: "-", a };
     }
     case "trans":
@@ -127,29 +127,101 @@ function simp(e: Expr): Expr {
     case "call":
       return { k: "call", name: e.name, args: e.args.map(simp) };
     case "bin": {
-      const a = simp(e.a);
-      const b = simp(e.b);
-      return simpBin(e.op, a, b);
+      if (e.op === "+" || e.op === "-") return simpSum(e);
+      return simpBin(e.op, simp(e.a), simp(e.b));
     }
     default:
       return e;
   }
 }
 
+function simpSum(e: Expr): Expr {
+  const groups = new Map<string, { coeff: number; factors: Expr[] }>();
+  let constant = 0;
+  for (const term of collectSum(e, 1)) {
+    if (term.coeff === 0) continue;
+    if (!term.factors.length) {
+      constant = num(constant + term.coeff);
+      continue;
+    }
+    const key = term.factors.map(termKey).sort().join("*");
+    const prev = groups.get(key);
+    if (prev) prev.coeff = num(prev.coeff + term.coeff);
+    else groups.set(key, { coeff: term.coeff, factors: term.factors });
+  }
+  let acc: Expr | null = null;
+  const add = (coeff: number, factors: Expr[]) => {
+    if (coeff === 0) return;
+    const neg = coeff < 0;
+    const piece = fromMul(neg ? num(-coeff) : coeff, factors);
+    if (!acc) {
+      acc = neg ? negNum(piece) : piece;
+      return;
+    }
+    acc = { k: "bin", op: neg ? "-" : "+", a: acc, b: piece };
+  };
+  for (const group of groups.values()) add(group.coeff, group.factors);
+  if (constant !== 0) add(constant, []);
+  return acc ?? { k: "num", v: 0 };
+}
+
+function collectSum(e: Expr, sign: number): { coeff: number; factors: Expr[] }[] {
+  if (e.k === "bin" && (e.op === "+" || e.op === "-")) {
+    return [...collectSum(e.a, sign), ...collectSum(e.b, e.op === "-" ? -sign : sign)];
+  }
+  if (e.k === "unary") return collectSum(e.a, -sign);
+  const flat = simp(e);
+  if (flat.k === "unary" || (flat.k === "bin" && (flat.op === "+" || flat.op === "-"))) return collectSum(flat, sign);
+  const parts = splitMul(flat);
+  return [{ coeff: num(sign * parts.coeff), factors: parts.factors }];
+}
+
+function termKey(e: Expr): string {
+  switch (e.k) {
+    case "num":
+      return `#${e.v}`;
+    case "name":
+      return e.s;
+    case "unary":
+      return `-(${termKey(e.a)})`;
+    case "bin":
+      return `(${termKey(e.a)}${e.op}${termKey(e.b)})`;
+    case "trans":
+      return `(${termKey(e.a)})'`;
+    case "call":
+      return `${e.prime ? "'" : ""}${e.name}(${e.args.map(termKey).join(",")})`;
+    case "mat":
+      return `[${e.rows.map((row) => row.map(termKey).join(",")).join(";")}]`;
+    case "colon":
+      return `${termKey(e.a)}:${e.step ? `${termKey(e.step)}:` : ""}${termKey(e.b)}`;
+    default:
+      return "?";
+  }
+}
+
 function simpBin(op: string, a: Expr, b: Expr): Expr {
   const av = a.k === "num" ? a.v : null;
   const bv = b.k === "num" ? b.v : null;
+  if (av !== null && bv !== null && !((op === "/" || op === "./" || op === "\\") && bv === 0)) {
+    const n = applyConst(op, av, bv);
+    if (n !== null) return { k: "num", v: num(n) };
+  }
   if (op === "+" || op === "-") {
-    if (av === 0) return op === "+" ? b : neg(b);
+    if (av === 0) return op === "+" ? b : negNum(b);
     if (bv === 0) return a;
   }
   if (op === "*" || op === ".*") {
     if (av === 0 || bv === 0) return { k: "num", v: 0 };
     if (av === 1) return b;
     if (bv === 1) return a;
+    if (op === "*") {
+      const left = splitMul(a);
+      const right = splitMul(b);
+      return fromMul(num(left.coeff * right.coeff), [...left.factors, ...right.factors]);
+    }
   }
   if ((op === "/" || op === "./") && bv === 1) return a;
-  if ((op === "/" || op === "./") && av === 0) return { k: "num", v: 0 };
+  if ((op === "/" || op === "./") && av === 0 && bv !== 0) return { k: "num", v: 0 };
   if (op === "^" || op === ".^") {
     if (bv === 0) return { k: "num", v: 1 };
     if (bv === 1) return a;
@@ -157,6 +229,50 @@ function simpBin(op: string, a: Expr, b: Expr): Expr {
     if (av === 1) return { k: "num", v: 1 };
   }
   return { k: "bin", op, a, b };
+}
+
+function applyConst(op: string, a: number, b: number): number | null {
+  if (op === "+") return a + b;
+  if (op === "-") return a - b;
+  if (op === "*" || op === ".*") return a * b;
+  if (op === "/" || op === "./") return a / b;
+  if (op === "^" || op === ".^") return a ** b;
+  return null;
+}
+
+function splitMul(e: Expr): { coeff: number; factors: Expr[] } {
+  if (e.k === "num") return { coeff: e.v, factors: [] };
+  if (e.k === "unary") {
+    const inner = splitMul(e.a);
+    return { coeff: -inner.coeff, factors: inner.factors };
+  }
+  if (e.k === "bin" && e.op === "*") {
+    const left = splitMul(e.a);
+    const right = splitMul(e.b);
+    return { coeff: left.coeff * right.coeff, factors: [...left.factors, ...right.factors] };
+  }
+  return { coeff: 1, factors: [e] };
+}
+
+function fromMul(coeff: number, factors: Expr[]): Expr {
+  if (coeff === 0) return { k: "num", v: 0 };
+  if (!factors.length) return { k: "num", v: num(coeff) };
+  let body = factors[0]!;
+  for (let i = 1; i < factors.length; i++) body = { k: "bin", op: "*", a: body, b: factors[i]! };
+  if (coeff === 1) return body;
+  if (coeff === -1) return { k: "unary", op: "-", a: body };
+  return { k: "bin", op: "*", a: { k: "num", v: num(coeff) }, b: body };
+}
+
+function negNum(e: Expr): Expr {
+  if (e.k === "num") return { k: "num", v: num(-e.v) };
+  if (e.k === "unary") return e.a;
+  return { k: "unary", op: "-", a: e };
+}
+
+function num(n: number): number {
+  const rounded = tidy(n);
+  return rounded === 0 ? 0 : rounded;
 }
 
 function constValue(e: Expr): number | null {

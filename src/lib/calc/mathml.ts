@@ -82,7 +82,7 @@ function renderBin(op: string, a: Expr, b: Expr): Piece {
   const left = render(a);
   const right = render(b);
   if (op === "*" || op === ".*") {
-    const symbol = op === ".*" ? "⊙" : left.atom === "num" && right.atom === "num" ? "×" : "";
+    const symbol = op === ".*" ? "⊙" : right.atom === "num" ? "⋅" : "";
     const opXml = symbol ? `<mo>${symbol}</mo>` : `<mo>&InvisibleTimes;</mo>`;
     return {
       xml: `<mrow>${paren(left, 2)}${opXml}${paren(right, op === "*" ? 2.1 : 2)}</mrow>`,

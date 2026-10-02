@@ -33,5 +33,13 @@ describe("mathml", () => {
     const root = toMathML("nthroot(x, 3)");
     assert.ok(root?.includes("<mroot>"));
     assert.equal(toMathML("A = 1"), null);
+
+    const juxtaposed = toMathML("2*t");
+    assert.ok(juxtaposed?.includes("InvisibleTimes"));
+    assert.ok(!juxtaposed?.includes("<mo>⋅</mo>"));
+    const explicit = toMathML("1/2*9.8*2");
+    assert.ok(explicit?.includes("<mo>⋅</mo>"));
+    assert.ok(explicit?.includes("<mn>9.8</mn>"));
+    assert.ok(explicit?.includes("<mn>2</mn>"));
   });
 });

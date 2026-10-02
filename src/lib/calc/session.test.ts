@@ -108,6 +108,18 @@ describe("rpn session", () => {
     if (at?.t === "s") assert.equal(at.v, 8);
     const shown = session.face().vars.find((row) => row.name.startsWith("f"));
     assert.equal(shown?.name, "f(t)");
+
+    session.runSource("h(t) = 1/2*9.8*t^2+2*t+3");
+    session.runSource("h'(t)");
+    const slope = session.stack.at(-1);
+    assert.equal(slope?.t, "sym");
+    if (slope?.t === "sym") assert.equal(slope.text, "9.8*t+2");
+    session.runSource("p(t) = 1/2*9.8*t^2+2*t+3");
+    session.runSource("q(x) = p(x)+1");
+    session.runSource("q(x)");
+    const simplified = session.stack.at(-1);
+    assert.equal(simplified?.t, "sym");
+    if (simplified?.t === "sym") assert.equal(simplified.text, "4.9*x^2+2*x+4");
   });
 
   it("multiplies matrices through the command line", () => {
