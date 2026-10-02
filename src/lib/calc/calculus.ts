@@ -8,6 +8,218 @@ export function derivative(expr: Expr, variable: string): Expr {
   return simplify(diffExpr(expr, variable));
 }
 
+export function antiderivative(expr: Expr, variable: string): Expr {
+  return simplify(integrateExpr(expr, variable));
+}
+
+function integrateExpr(e: Expr, v: string): Expr {
+  const s = simplify(e);
+  if (!depends(s, v)) return times(s, { k: "name", s: v }, "*");
+  if (s.k === "name") return over(pow(s, 2), { k: "num", v: 2 });
+  if (s.k === "unary") return neg(integrateExpr(s.a, v));
+  if (s.k === "bin" && (s.op === "+" || s.op === "-")) {
+    const left = integrateExpr(s.a, v);
+    const right = integrateExpr(s.b, v);
+    return s.op === "+" ? plus(left, right) : minus(left, right);
+  }
+  if (s.k === "bin" && (s.op === "*" || s.op === ".*")) {
+    const parts = splitMul(s);
+    if (!parts.factors.length) return times({ k: "num", v: num(parts.coeff) }, { k: "name", s: v }, "*");
+    const inner = integrateProduct(parts.factors, v);
+    return parts.coeff === 1 ? inner : times({ k: "num", v: num(parts.coeff) }, inner, "*");
+  }
+  if (s.k === "bin" && (s.op === "/" || s.op === "./")) {
+    if (!depends(s.b, v)) return over(integrateExpr(s.a, v), s.b);
+    if (!depends(s.a, v)) return times(s.a, integrateRecip(s.b, v), "*");
+    return integrateProduct([s.a, over(one(), s.b)], v);
+  }
+  if (s.k === "bin" && (s.op === "^" || s.op === ".^")) return integratePower(s.a, s.b, v);
+  if (s.k === "call") return integrateCall(s, v);
+  throw new Error("Cannot integrate");
+}
+
+function integrateProduct(factors: Expr[], v: string): Expr {
+  if (factors.length === 1) return integrateExpr(factors[0]!, v);
+  const powers = factors.map((factor) => powerOfVar(factor, v));
+  if (powers.every((n) => n !== null)) {
+    const degree = powers.reduce((sum, n) => sum + (n ?? 0), 0);
+    return integratePower({ k: "name", s: v }, { k: "num", v: degree }, v);
+  }
+  for (let i = 0; i < factors.length; i++) {
+    const inside = knownInside(factors[i]!);
+    if (!inside || !depends(inside.u, v)) continue;
+    const du = simplify(diffExpr(inside.u, v));
+    const rest = fromMul(1, factors.filter((_, index) => index !== i));
+    const ratio = mulRatio(rest, du, v);
+    if (ratio) return times(ratio, inside.F, "*");
+  }
+  for (let i = 0; i < factors.length; i++) {
+    const u = factors[i]!;
+    if (!depends(u, v)) continue;
+    const du = simplify(diffExpr(u, v));
+    const rest = fromMul(1, factors.filter((_, index) => index !== i));
+    const ratio = mulRatio(rest, du, v);
+    if (ratio) return times(ratio, over(pow(u, 2), { k: "num", v: 2 }), "*");
+  }
+  throw new Error("Cannot integrate");
+}
+
+function powerOfVar(factor: Expr, v: string): number | null {
+  if (factor.k === "name") return factor.s === v ? 1 : null;
+  if (factor.k === "bin" && (factor.op === "^" || factor.op === ".^") && factor.a.k === "name" && factor.a.s === v) {
+    const n = constValue(factor.b);
+    return n === null ? null : n;
+  }
+  return null;
+}
+
+function knownInside(factor: Expr): { u: Expr; F: Expr } | null {
+  if (factor.k === "call" && factor.args.length === 1) {
+    const F = primitive(factor.name.toLowerCase(), factor.args[0]!);
+    return F ? { u: factor.args[0]!, F } : null;
+  }
+  const inv = recipInner(factor);
+  if (inv) return { u: inv, F: call("log", call("abs", inv)) };
+  if (factor.k === "bin" && (factor.op === "^" || factor.op === ".^")) {
+    const n = constValue(factor.b);
+    if (n === null || Math.abs(n + 1) < 1e-12) return null;
+    const u = factor.a;
+    return { u, F: over(pow(u, num(n + 1)), { k: "num", v: num(n + 1) }) };
+  }
+  return null;
+}
+
+function recipInner(e: Expr): Expr | null {
+  if (e.k === "bin" && (e.op === "/" || e.op === "./") && e.a.k === "num" && e.a.v === 1) return e.b;
+  if (e.k === "bin" && (e.op === "^" || e.op === ".^")) {
+    const n = constValue(e.b);
+    if (n !== null && Math.abs(n + 1) < 1e-12) return e.a;
+  }
+  return null;
+}
+
+function mulRatio(numer: Expr, denom: Expr, v: string): Expr | null {
+  const n = splitMul(simplify(numer));
+  const d = splitMul(simplify(denom));
+  if (d.coeff === 0) return null;
+  const bag = new Map<string, { expr: Expr; count: number }>();
+  for (const factor of n.factors) {
+    const key = termKey(factor);
+    const hit = bag.get(key);
+    if (hit) hit.count += 1;
+    else bag.set(key, { expr: factor, count: 1 });
+  }
+  for (const factor of d.factors) {
+    const hit = bag.get(termKey(factor));
+    if (!hit || hit.count === 0) return null;
+    hit.count -= 1;
+  }
+  const remain: Expr[] = [];
+  for (const hit of bag.values()) {
+    for (let i = 0; i < hit.count; i++) remain.push(hit.expr);
+  }
+  if (remain.some((factor) => depends(factor, v))) return null;
+  return fromMul(num(n.coeff / d.coeff), remain);
+}
+
+function integratePower(base: Expr, exponent: Expr, v: string): Expr {
+  const n = constValue(exponent);
+  if (n === null) {
+    if (!depends(base, v)) {
+      const lin = asAffine(exponent, v);
+      const baseN = constValue(base);
+      if (lin && lin.slope !== 0 && baseN !== null && baseN > 0 && baseN !== 1) {
+        return bySlope(ePow(base, exponent, "^"), num(Math.log(baseN) * lin.slope));
+      }
+    }
+    throw new Error("Cannot integrate");
+  }
+  if (!depends(base, v)) return times(ePow(base, exponent, "^"), { k: "name", s: v }, "*");
+  const lin = asAffine(base, v);
+  if (!lin || lin.slope === 0) throw new Error("Cannot integrate");
+  if (Math.abs(n + 1) < 1e-12) return bySlope(call("log", call("abs", base)), lin.slope);
+  return bySlope(pow(base, num(n + 1)), num((n + 1) * lin.slope));
+}
+
+function integrateCall(e: Expr, v: string): Expr {
+  if (e.args.length !== 1) throw new Error("Cannot integrate");
+  const u = e.args[0]!;
+  if (!depends(u, v)) return times(e, { k: "name", s: v }, "*");
+  const F = primitive(e.name.toLowerCase(), u);
+  if (!F) throw new Error("Cannot integrate");
+  const lin = asAffine(u, v);
+  if (!lin || lin.slope === 0) throw new Error("Cannot integrate");
+  return bySlope(F, lin.slope);
+}
+
+function integrateRecip(b: Expr, v: string): Expr {
+  const lin = asAffine(b, v);
+  if (lin && lin.slope !== 0) return bySlope(call("log", call("abs", b)), lin.slope);
+  if (b.k === "bin" && (b.op === "^" || b.op === ".^")) {
+    const n = constValue(b.b);
+    if (n !== null) return integratePower(b.a, { k: "num", v: num(-n) }, v);
+  }
+  const inside = knownInside(b);
+  if (inside && depends(inside.u, v)) {
+    const du = simplify(diffExpr(inside.u, v));
+    const ratio = mulRatio(one(), du, v);
+    if (ratio) return times(ratio, call("log", call("abs", b)), "*");
+  }
+  throw new Error("Cannot integrate");
+}
+
+function primitive(name: string, u: Expr): Expr | null {
+  if (name === "sin") return neg(call("cos", u));
+  if (name === "cos") return call("sin", u);
+  if (name === "tan") return neg(call("log", call("abs", call("cos", u))));
+  if (name === "exp") return call("exp", u);
+  if (name === "sinh") return call("cosh", u);
+  if (name === "cosh") return call("sinh", u);
+  if (name === "tanh") return call("log", call("cosh", u));
+  if (name === "sqrt") return bySlope(pow(u, 1.5), 1.5);
+  if (name === "log" || name === "ln") return minus(times(u, call("log", u), "*"), u);
+  if (name === "log10") return over(minus(times(u, call("log", u), "*"), u), call("log", { k: "num", v: 10 }));
+  if (name === "asin") return plus(times(u, call("asin", u), "*"), call("sqrt", minus(one(), pow(u, 2))));
+  if (name === "acos") return minus(times(u, call("acos", u), "*"), call("sqrt", minus(one(), pow(u, 2))));
+  if (name === "atan") return minus(times(u, call("atan", u), "*"), over(call("log", plus(one(), pow(u, 2))), { k: "num", v: 2 }));
+  if (name === "abs") return over(times(u, call("abs", u), "*"), { k: "num", v: 2 });
+  return null;
+}
+
+function bySlope(e: Expr, slope: number): Expr {
+  const s = num(slope);
+  if (s === 1) return e;
+  if (s === -1) return neg(e);
+  if (s === 0) throw new Error("Cannot integrate");
+  return over(e, { k: "num", v: s });
+}
+
+function asAffine(e: Expr, v: string): { slope: number; rest: Expr } | null {
+  if (e.k === "num") return { slope: 0, rest: e };
+  if (e.k === "name") return e.s === v ? { slope: 1, rest: { k: "num", v: 0 } } : { slope: 0, rest: e };
+  if (e.k === "unary") {
+    const inner = asAffine(e.a, v);
+    if (!inner) return null;
+    return { slope: num(-inner.slope), rest: simplify(neg(inner.rest)) };
+  }
+  if (e.k === "bin" && (e.op === "+" || e.op === "-")) {
+    const left = asAffine(e.a, v);
+    const right = asAffine(e.b, v);
+    if (!left || !right) return null;
+    const sign = e.op === "-" ? -1 : 1;
+    const rest = e.op === "+" ? plus(left.rest, right.rest) : minus(left.rest, right.rest);
+    return { slope: num(left.slope + sign * right.slope), rest: simplify(rest) };
+  }
+  if (e.k === "bin" && (e.op === "*" || e.op === ".*")) {
+    const parts = splitMul(e);
+    if (!parts.factors.length) return { slope: 0, rest: { k: "num", v: num(parts.coeff) } };
+    if (parts.factors.length === 1 && parts.factors[0]!.k === "name" && parts.factors[0]!.s === v) {
+      return { slope: num(parts.coeff), rest: { k: "num", v: 0 } };
+    }
+  }
+  return null;
+}
+
 export function definiteIntegral(sample: (x: number) => number, a: number, b: number): number {
   if (!Number.isFinite(a) || !Number.isFinite(b)) throw new Error("Bad bound");
   if (a === b) return 0;
@@ -120,6 +332,7 @@ function simp(e: Expr): Expr {
       const a = simp(e.a);
       if (a.k === "unary") return a.a;
       if (a.k === "num") return { k: "num", v: num(-a.v) };
+      if (a.k === "bin" && (a.op === "+" || a.op === "-")) return simpSum({ k: "unary", op: "-", a });
       return { k: "unary", op: "-", a };
     }
     case "trans":
@@ -217,7 +430,7 @@ function simpBin(op: string, a: Expr, b: Expr): Expr {
     if (op === "*") {
       const left = splitMul(a);
       const right = splitMul(b);
-      return fromMul(num(left.coeff * right.coeff), [...left.factors, ...right.factors]);
+      return mulJoined(num(left.coeff * right.coeff), [...left.factors, ...right.factors]);
     }
   }
   if ((op === "/" || op === "./") && bv === 1) return a;
@@ -252,6 +465,38 @@ function splitMul(e: Expr): { coeff: number; factors: Expr[] } {
     return { coeff: left.coeff * right.coeff, factors: [...left.factors, ...right.factors] };
   }
   return { coeff: 1, factors: [e] };
+}
+
+function mulJoined(coeff: number, factors: Expr[]): Expr {
+  const kept: Expr[] = [];
+  for (const factor of factors) {
+    if (factor.k === "bin" && (factor.op === "/" || factor.op === "./") && factor.b.k === "num" && factor.b.v !== 0) {
+      const den = num(factor.b.v);
+      if (Number.isInteger(num(coeff)) && Number.isInteger(den)) {
+        const g = gcd(Math.abs(num(coeff)), Math.abs(den));
+        const reduced = num(den / g);
+        if (reduced === 1 || reduced === -1) {
+          const inner = splitMul(factor.a);
+          coeff = num((coeff / g) * inner.coeff * (reduced === -1 ? -1 : 1));
+          kept.push(...inner.factors);
+          continue;
+        }
+      }
+    }
+    kept.push(factor);
+  }
+  return fromMul(num(coeff), kept);
+}
+
+function gcd(a: number, b: number): number {
+  let x = Math.abs(Math.round(a));
+  let y = Math.abs(Math.round(b));
+  while (y) {
+    const t = y;
+    y = x % y;
+    x = t;
+  }
+  return x || 1;
 }
 
 function fromMul(coeff: number, factors: Expr[]): Expr {

@@ -62,6 +62,25 @@ describe("rpn session", () => {
     assert.equal(sine?.t, "s");
     if (sine?.t === "s") assert.ok(Math.abs(sine.v - 2) < 1e-3);
 
+    session.runSource("integ(x^2, x)");
+    const cubic = session.stack.at(-1);
+    assert.equal(cubic?.t, "sym");
+    if (cubic?.t === "sym") assert.equal(cubic.text, "x^3/3");
+    session.runSource("integ(sin(x), x)");
+    const wave = session.stack.at(-1);
+    assert.equal(wave?.t, "sym");
+    if (wave?.t === "sym") assert.equal(wave.text, "-cos(x)");
+    session.runSource("f(t) = 1/2*9.8*t^2+2*t+3");
+    session.runSource("integ(f, t)");
+    const motion = session.stack.at(-1);
+    assert.equal(motion?.t, "sym");
+    if (motion?.t === "sym") {
+      session.runSource(`diff(${motion.text}, t, 2)`);
+      const back = session.stack.at(-1);
+      assert.equal(back?.t, "s");
+      if (back?.t === "s") assert.ok(Math.abs(back.v - 26.6) < 1e-9);
+    }
+
     session.runSource("plot(sin(x), x, 0, pi)");
     const plot = session.face().plot;
     assert.equal(plot?.kind, "xy");

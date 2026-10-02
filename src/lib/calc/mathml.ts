@@ -172,6 +172,13 @@ function renderCall(name: string, args: Expr[]): Piece {
     }
     return { xml: `<mrow>${deriv}</mrow>`, prec: 6, atom: "other" };
   }
+  if (name === "integ" && x && y?.k === "name" && !z) {
+    return {
+      xml: `<mrow><mo>∫</mo><mspace width="0.2em"/>${paren(render(x), 3)}<mspace width="0.15em"/><mi mathvariant="normal">d</mi>${renderName(y.s).xml}</mrow>`,
+      prec: 6,
+      atom: "other",
+    };
+  }
   if (name === "integ" && x && y?.k === "name" && z && args[3]) {
     return {
       xml: `<mrow><msubsup><mo>∫</mo>${render(z).xml}${render(args[3]).xml}</msubsup><mspace width="0.2em"/>${paren(render(x), 3)}<mspace width="0.15em"/><mi mathvariant="normal">d</mi>${renderName(y.s).xml}</mrow>`,

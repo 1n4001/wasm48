@@ -1,6 +1,6 @@
 import { Asm, F64, I32, OP, WasmModule } from "./wasm-module.ts";
 import { type Engine, type Val, cloneVal, matrix, scalar, valData } from "./engine.ts";
-import { definiteIntegral, derivative, sampleSurface, simplify, type Plot } from "./calculus.ts";
+import { antiderivative, definiteIntegral, derivative, sampleSurface, simplify, type Plot } from "./calculus.ts";
 import { AGG, CONSTANTS, ELEM_SPEC, MAX2, MIN2, foldCall, runAgg, evalElem, type ElemSpec } from "./library.ts";
 
 export class MatlabError extends Error {
@@ -1604,11 +1604,22 @@ function calculusStmt(expr: Expr, scope: Map<string, Val>): { value?: Val; plot?
     return { value: { t: "sym", text: exprText(derived) } };
   }
   if (name === "integ") {
-    if (expr.args.length !== 4) throw new MatlabError("Too Few Arguments");
+    if (expr.args.length < 2) throw new MatlabError("Too Few Arguments");
     const variable = varName(expr.args[1]!);
+    if (expr.args.length === 2) {
+      let anti: Expr;
+      try {
+        anti = antiderivative(integrand(expr.args[0]!, variable, scope), variable);
+      } catch (err) {
+        throw new MatlabError(err instanceof Error ? err.message : "Cannot integrate");
+      }
+      if (anti.k === "num") return { value: scalar(anti.v) };
+      return { value: { t: "sym", text: exprText(anti) } };
+    }
+    if (expr.args.length !== 4) throw new MatlabError("Too Few Arguments");
     const a = numArg(expr.args[2]!, scope);
     const b = numArg(expr.args[3]!, scope);
-    const value = definiteIntegral((x) => evalAt(expr.args[0]!, variable, x, scope), a, b);
+    const value = definiteIntegral((x) => evalAt(integrand(expr.args[0]!, variable, scope), variable, x, scope), a, b);
     return { value: scalar(value) };
   }
   if (name === "plot") {
@@ -1629,6 +1640,15 @@ function calculusStmt(expr: Expr, scope: Map<string, Val>): { value?: Val; plot?
   const y1 = numArg(expr.args[6]!, scope);
   const grid = sampleSurface((x, y) => evalAt2(expr.args[0]!, xv, x, yv, y, scope), x0, x1, y0, y1);
   return { plot: { kind: "xyz", label: exprText(expr.args[0]!), xs: grid.xs, ys: grid.ys, zs: grid.zs } };
+}
+
+function integrand(arg: Expr, variable: string, scope: Map<string, Val>): Expr {
+  if (arg.k !== "name") return arg;
+  const fn = scope.get(arg.s);
+  if (fn?.t !== "fn") return arg;
+  if (fn.params.length !== 1) throw new MatlabError("Need one variable");
+  const body = expandCalls(parseOne(fn.body), scope, new Set([arg.s]));
+  return substitute(body, fn.params[0]!, { k: "name", s: variable });
 }
 
 function varName(expr: Expr): string {

@@ -319,6 +319,12 @@ export class Session {
     this.emit();
   }
 
+  setCommand(text: string) {
+    this.message = null;
+    this.line = text;
+    this.emit();
+  }
+
   runSource(src: string): boolean {
     this.message = null;
     const ok = this.execSource(src, true);

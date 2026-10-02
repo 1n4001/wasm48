@@ -30,10 +30,12 @@ export function Calculator() {
   const [face, setFace] = useState<FaceState>(emptyFace);
   const [source, setSource] = useState(STARTER);
   const [keysOpen, setKeysOpen] = useState(true);
+  const [fnsOpen, setFnsOpen] = useState(false);
   const [fnQuery, setFnQuery] = useState("");
   const [fnGroup, setFnGroup] = useState("All");
   const [fnSort, setFnSort] = useState<{ key: "group" | "name" | "about" | "example"; dir: "asc" | "desc" } | null>(null);
   const stackRef = useRef<HTMLDivElement>(null);
+  const commandRef = useRef<HTMLInputElement>(null);
   const fnGroups = useMemo(() => ["All", ...new Set(FUNCTIONS.map((row) => row.group))], []);
   const fnRows = useMemo(() => {
     const q = fnQuery.trim().toLowerCase();
@@ -70,44 +72,8 @@ export function Calculator() {
     };
     draw();
     const unsubscribe = session.subscribe(draw);
-    const onKey = (event: KeyboardEvent) => {
-      const target = event.target;
-      if (target instanceof HTMLElement && target.closest("textarea, input")) return;
-      const key = event.key;
-      if (key === "Enter") {
-        event.preventDefault();
-        session.press("enter");
-      } else if (key === "Backspace") {
-        event.preventDefault();
-        session.press("del");
-      } else if (key === "Escape") {
-        session.press("on");
-      } else if (key === " ") {
-        event.preventDefault();
-        session.press("spc");
-      } else if (key === "+") session.press("add");
-      else if (key === "-") session.press("sub");
-      else if (key === "*") session.press("mul");
-      else if (key === "/") session.press("div");
-      else if (key === "^") session.press("pow");
-      else if (key === "(") session.press("lparen");
-      else if (key === ")") session.press("rparen");
-      else if (key === "[") session.press("lbracket");
-      else if (key === "]") session.press("rbracket");
-      else if (key === "=") session.press("eq");
-      else if (key === "'") session.press("tick");
-      else if (key === ",") session.typeText(",");
-      else if (key === ";") session.typeText(";");
-      else if (key === ":") session.typeText(":");
-      else if (key === ".") session.press("dot");
-      else if (/^\d$/.test(key)) session.press(key);
-      else if (/^[a-zA-Z]$/.test(key)) session.typeText(key);
-      else return;
-    };
-    window.addEventListener("keydown", onKey);
     return () => {
       unsubscribe();
-      window.removeEventListener("keydown", onKey);
     };
   }, []);
 
@@ -118,6 +84,7 @@ export function Calculator() {
 
   const hit = (id: string) => {
     sessionRef.current?.press(id);
+    commandRef.current?.focus();
   };
 
   const runScript = () => {
@@ -131,8 +98,8 @@ export function Calculator() {
           <p className="text-2xl leading-none font-bold tracking-[0.18em]">WASM48</p>
         </header>
         <div className="flex items-stretch gap-3">
-          <div className="lcd-well flex min-h-full min-w-0 flex-1">
-            <div className="lcd flex h-full min-h-full w-full flex-col gap-2 px-3 py-2">
+          <div className="lcd-well flex max-h-[50vh] min-h-0 min-w-0 flex-1 flex-col self-start">
+            <div className="lcd flex min-h-0 w-full flex-1 flex-col gap-2 px-3 py-2">
               <div className="flex items-center justify-between text-xs tracking-widest">
                 <span className="flex gap-3">
                   <Ann on={face.shift === "l"} text="LS" />
@@ -141,41 +108,54 @@ export function Calculator() {
                 </span>
                 <span className="font-bold">{face.angle}</span>
               </div>
-              <div ref={stackRef} className="flex flex-1 flex-col justify-end gap-3 text-base">
-                {face.levels.map((row) => (
-                  <div key={row.level}>
-                    <div className="text-left">
-                      <button
-                        type="button"
-                        className="text-lcd-dim"
-                        title="Copy script"
-                        onClick={() => {
-                          const text = sessionRef.current?.levelScript(row.level) ?? row.expr;
-                          void navigator.clipboard.writeText(text).then(
-                            () => sessionRef.current?.notify("Copied"),
-                            () => sessionRef.current?.notify("Copy failed"),
-                          );
-                        }}
-                      >
-                        {row.level}:
-                      </button>{" "}
-                      <MathView source={row.expr} />
+              <div ref={stackRef} className="lcd-stack text-base">
+                <div className="lcd-stack-body">
+                  {face.levels.map((row) => (
+                    <div key={row.level}>
+                      <div className="text-left">
+                        <button
+                          type="button"
+                          className="text-lcd-dim"
+                          title="Copy script"
+                          onClick={() => {
+                            const text = sessionRef.current?.levelScript(row.level) ?? row.expr;
+                            void navigator.clipboard.writeText(text).then(
+                              () => sessionRef.current?.notify("Copied"),
+                              () => sessionRef.current?.notify("Copy failed"),
+                            );
+                          }}
+                        >
+                          {row.level}:
+                        </button>{" "}
+                        <MathView source={row.expr} />
+                      </div>
+                      <div className="flex justify-end">
+                        <MathView source={row.text} />
+                      </div>
                     </div>
-                    <div className="flex justify-end">
-                      <MathView source={row.text} />
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-              <div className="min-h-6 text-left text-base">
-                {face.message ? (
-                  <span className="text-danger">{face.message}</span>
-                ) : face.command ? (
-                  <span>
-                    <MathView source={face.command} />
-                    <i className="lcd-caret" />
-                  </span>
-                ) : null}
+              <div className="lcd-command">
+                <input
+                  ref={commandRef}
+                  value={face.command}
+                  onChange={(event) => sessionRef.current?.setCommand(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      sessionRef.current?.press("enter");
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      sessionRef.current?.press("on");
+                    }
+                  }}
+                  spellCheck={false}
+                  aria-label="Command line"
+                  placeholder="entry"
+                  className="lcd-input"
+                />
+                {face.message ? <span className="text-danger">{face.message}</span> : null}
               </div>
               <div className="lcd-menu">
                 {face.menuLabels.map((label, index) => (
@@ -262,7 +242,10 @@ export function Calculator() {
               <li key={row.name}>
                 <button
                   type="button"
-                  onClick={() => sessionRef.current?.typeText(row.name)}
+                  onClick={() => {
+                    sessionRef.current?.typeText(row.name);
+                    commandRef.current?.focus();
+                  }}
                   className="flex w-full items-baseline justify-between gap-3 bg-body px-3 py-2 text-left"
                 >
                   <span className="font-mono text-legend-l">{row.name}</span>
@@ -276,62 +259,76 @@ export function Calculator() {
         </div>
       </section>
       <section className="bg-body">
-        <div className="flex flex-wrap items-center gap-2 px-3 pt-3">
-          <h2 className="text-sm tracking-[0.16em] text-muted">Functions</h2>
-          <input
-            value={fnQuery}
-            onChange={(event) => setFnQuery(event.target.value)}
-            placeholder="Search"
-            aria-label="Search functions"
-            className="min-w-40 flex-1 bg-bg px-3 py-1.5 font-mono text-sm text-ink outline-none"
-          />
-          <select
-            value={fnGroup}
-            onChange={(event) => setFnGroup(event.target.value)}
-            aria-label="Function group"
-            className="bg-bg px-2 py-1.5 text-sm text-ink outline-none"
-          >
-            {fnGroups.map((group) => (
-              <option key={group}>{group}</option>
-            ))}
-          </select>
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-3 text-left"
+          aria-expanded={fnsOpen}
+          onClick={() => setFnsOpen((open) => !open)}
+        >
+          <span className="text-sm tracking-[0.16em] text-muted">{fnsOpen ? "▾" : "▸"} Functions</span>
           <span className="text-sm text-muted">
-            {fnRows.length} / {FUNCTIONS.length}
+            {FUNCTIONS.length}
           </span>
-        </div>
-        <div className="max-h-[32rem] overflow-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="sticky top-0 bg-body text-xs tracking-[0.14em] text-muted">
-              <tr>
-                <FnHead label="Group" sort={fnSort} k="group" onSort={sortFns} />
-                <FnHead label="Call" sort={fnSort} k="name" onSort={sortFns} />
-                <FnHead label="What it does" sort={fnSort} k="about" onSort={sortFns} />
-                <FnHead label="Example" sort={fnSort} k="example" onSort={sortFns} />
-              </tr>
-            </thead>
-            <tbody>
-              {fnRows.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-3 py-3 text-muted">
-                    No functions match.
-                  </td>
-                </tr>
-              ) : null}
-              {fnRows.map((row) => (
-                <tr key={`${row.group}-${row.name}-${row.args}`} className="border-t border-line">
-                  <td className="px-3 py-2 text-muted">{row.group}</td>
-                  <td className="px-3 py-2 font-mono text-legend-l">{row.args ? `${row.name}(${row.args})` : row.name}</td>
-                  <td className="px-3 py-2 text-ink">{row.about}</td>
-                  <td className="px-3 py-2">
-                    <button type="button" className="font-mono text-legend-r" onClick={() => setSource(row.example)}>
-                      {row.example}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        </button>
+        {fnsOpen ? (
+          <>
+            <div className="flex flex-wrap items-center gap-2 px-3 pb-3">
+              <input
+                value={fnQuery}
+                onChange={(event) => setFnQuery(event.target.value)}
+                placeholder="Search"
+                aria-label="Search functions"
+                className="min-w-40 flex-1 bg-bg px-3 py-1.5 font-mono text-sm text-ink outline-none"
+              />
+              <select
+                value={fnGroup}
+                onChange={(event) => setFnGroup(event.target.value)}
+                aria-label="Function group"
+                className="bg-bg px-2 py-1.5 text-sm text-ink outline-none"
+              >
+                {fnGroups.map((group) => (
+                  <option key={group}>{group}</option>
+                ))}
+              </select>
+              <span className="text-sm text-muted">
+                {fnRows.length} / {FUNCTIONS.length}
+              </span>
+            </div>
+            <div className="max-h-[32rem] overflow-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="sticky top-0 bg-body text-xs tracking-[0.14em] text-muted">
+                  <tr>
+                    <FnHead label="Group" sort={fnSort} k="group" onSort={sortFns} />
+                    <FnHead label="Call" sort={fnSort} k="name" onSort={sortFns} />
+                    <FnHead label="What it does" sort={fnSort} k="about" onSort={sortFns} />
+                    <FnHead label="Example" sort={fnSort} k="example" onSort={sortFns} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {fnRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-3 text-muted">
+                        No functions match.
+                      </td>
+                    </tr>
+                  ) : null}
+                  {fnRows.map((row) => (
+                    <tr key={`${row.group}-${row.name}-${row.args}`} className="border-t border-line">
+                      <td className="px-3 py-2 text-muted">{row.group}</td>
+                      <td className="px-3 py-2 font-mono text-legend-l">{row.args ? `${row.name}(${row.args})` : row.name}</td>
+                      <td className="px-3 py-2 text-ink">{row.about}</td>
+                      <td className="px-3 py-2">
+                        <button type="button" className="font-mono text-legend-r" onClick={() => setSource(row.example)}>
+                          {row.example}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : null}
       </section>
     </main>
   );
