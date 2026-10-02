@@ -139,6 +139,45 @@ describe("rpn session", () => {
     const simplified = session.stack.at(-1);
     assert.equal(simplified?.t, "sym");
     if (simplified?.t === "sym") assert.equal(simplified.text, "4.9*x^2+2*x+4");
+
+    session.runSource("syms a v p");
+    assert.ok(session.face().vars.some((row) => row.id === "a" && row.symbol));
+    session.runSource("s(t) = 1/2*a*t^2+v*t+p");
+    session.runSource("s(t)");
+    const position = session.stack.at(-1);
+    assert.equal(position?.t, "sym");
+    if (position?.t === "sym") assert.equal(position.text, "0.5*a*t^2+v*t+p");
+    session.runSource("s'(t)");
+    const velocity = session.stack.at(-1);
+    assert.equal(velocity?.t, "sym");
+    if (velocity?.t === "sym") assert.equal(velocity.text, "a*t+v");
+    session.runSource("a = 9.8");
+    session.runSource("s'(t)");
+    const plugged = session.stack.at(-1);
+    assert.equal(plugged?.t, "sym");
+    if (plugged?.t === "sym") assert.equal(plugged.text, "9.8*t+v");
+    session.runSource("clear v");
+    assert.equal(session.face().vars.some((row) => row.id === "v"), false);
+    session.forget("p");
+    assert.equal(session.face().vars.some((row) => row.id === "p"), false);
+
+    session.runSource("solve(2*x+y==5, x-y==1, [x, y])");
+    const system = session.stack.at(-1);
+    assert.equal(system?.t, "m");
+    if (system?.t === "m") {
+      assert.equal(system.r, 2);
+      assert.ok(Math.abs((system.d[0] ?? 0) - 2) < 1e-9);
+      assert.ok(Math.abs((system.d[1] ?? 0) - 1) < 1e-9);
+    }
+    const x = session.face().vars.find((row) => row.id === "x");
+    const y = session.face().vars.find((row) => row.id === "y");
+    assert.equal(x?.text, "2");
+    assert.equal(y?.text, "1");
+    session.runSource("syms a");
+    session.runSource("solve(u+w==a, u-w==1, [u, w])");
+    const parametric = session.stack.at(-1);
+    assert.equal(parametric?.t, "sym");
+    if (parametric?.t === "sym") assert.equal(parametric.text, "u = (a+1)/2\nw = (a-1)/2");
   });
 
   it("multiplies matrices through the command line", () => {

@@ -435,6 +435,7 @@ function simpBin(op: string, a: Expr, b: Expr): Expr {
   }
   if ((op === "/" || op === "./") && bv === 1) return a;
   if ((op === "/" || op === "./") && av === 0 && bv !== 0) return { k: "num", v: 0 };
+  if ((op === "/" || op === "./") && bv !== null && bv < 0) return simp(over(negNum(a), { k: "num", v: num(-bv) }));
   if (op === "^" || op === ".^") {
     if (bv === 0) return { k: "num", v: 1 };
     if (bv === 1) return a;
@@ -598,6 +599,168 @@ const over = (a: Expr, b: Expr): Expr => ({ k: "bin", op: "/", a, b });
 const pow = (a: Expr, n: number): Expr => ({ k: "bin", op: "^", a, b: { k: "num", v: n } });
 const call = (name: string, a: Expr): Expr => ({ k: "call", name, args: [a] });
 const ePow = (a: Expr, b: Expr, op: string): Expr => ({ k: "bin", op, a, b });
+
+export function solveLinear(equations: Expr[], vars: string[]): Expr[] {
+  if (!vars.length || equations.length !== vars.length) throw new Error("Bad Size");
+  if (new Set(vars).size !== vars.length) throw new Error("Repeated Name");
+  const wanted = new Set(vars);
+  const rows = equations.map((eq) => affine(eq, wanted, vars));
+  if (rows.every((row) => row.coeff.every((c) => c.k === "num") && row.rhs.k === "num")) {
+    return numericSolve(rows.map((row) => row.coeff.map((c) => (c.k === "num" ? c.v : NaN))), rows.map((row) => (row.rhs.k === "num" ? row.rhs.v : NaN)));
+  }
+  return symbolicSolve(rows.map((row) => row.coeff), rows.map((row) => row.rhs));
+}
+
+function affine(eq: Expr, wanted: Set<string>, vars: string[]): { coeff: Expr[]; rhs: Expr } {
+  const zero = eq.k === "bin" && eq.op === "==" ? minus(eq.a, eq.b) : eq;
+  const lin = collectLinear(simplify(zero), wanted);
+  return {
+    coeff: vars.map((name) => lin.coeff.get(name) ?? { k: "num", v: 0 }),
+    rhs: simplify(neg(lin.constant)),
+  };
+}
+
+function collectLinear(e: Expr, vars: Set<string>): { coeff: Map<string, Expr>; constant: Expr } {
+  if (e.k === "bin" && (e.op === "+" || e.op === "-")) {
+    const left = collectLinear(e.a, vars);
+    const right = collectLinear(e.b, vars);
+    const coeff = new Map(left.coeff);
+    for (const [name, term] of right.coeff) {
+      const prev = coeff.get(name) ?? { k: "num", v: 0 };
+      coeff.set(name, simplify(e.op === "+" ? plus(prev, term) : minus(prev, term)));
+    }
+    return {
+      coeff,
+      constant: simplify(e.op === "+" ? plus(left.constant, right.constant) : minus(left.constant, right.constant)),
+    };
+  }
+  if (e.k === "unary") {
+    const inner = collectLinear(e.a, vars);
+    return {
+      coeff: new Map([...inner.coeff].map(([name, term]) => [name, simplify(neg(term))])),
+      constant: simplify(neg(inner.constant)),
+    };
+  }
+  if (!mentions(e, vars)) return { coeff: new Map(), constant: e };
+  const term = linearTerm(e, vars);
+  if (!term) throw new Error("Not linear");
+  return { coeff: new Map([[term.name, term.coeff]]), constant: { k: "num", v: 0 } };
+}
+
+function linearTerm(e: Expr, vars: Set<string>): { name: string; coeff: Expr } | null {
+  if (e.k === "name" && vars.has(e.s)) return { name: e.s, coeff: one() };
+  if (e.k === "bin" && (e.op === "*" || e.op === ".*")) {
+    const left = linearTerm(e.a, vars);
+    const right = linearTerm(e.b, vars);
+    if (left && !mentions(e.b, vars)) return { name: left.name, coeff: simplify(times(left.coeff, e.b, "*")) };
+    if (right && !mentions(e.a, vars)) return { name: right.name, coeff: simplify(times(e.a, right.coeff, "*")) };
+    return null;
+  }
+  if (e.k === "bin" && (e.op === "/" || e.op === "./") && !mentions(e.b, vars)) {
+    const left = linearTerm(e.a, vars);
+    if (left) return { name: left.name, coeff: simplify(over(left.coeff, e.b)) };
+  }
+  return null;
+}
+
+function mentions(e: Expr, vars: Set<string>): boolean {
+  for (const name of vars) if (depends(e, name)) return true;
+  return false;
+}
+
+function numericSolve(a: number[][], b: number[]): Expr[] {
+  const n = b.length;
+  const m = a.map((row, i) => [...row, b[i] ?? NaN]);
+  for (let col = 0; col < n; col++) {
+    let pivot = col;
+    for (let row = col + 1; row < n; row++) if (Math.abs(m[row]![col] ?? 0) > Math.abs(m[pivot]![col] ?? 0)) pivot = row;
+    if (Math.abs(m[pivot]![col] ?? 0) < 1e-12) throw new Error("Singular");
+    if (pivot !== col) [m[col], m[pivot]] = [m[pivot]!, m[col]!];
+    const div = m[col]![col] ?? 1;
+    for (let c = col; c <= n; c++) m[col]![c] = (m[col]![c] ?? 0) / div;
+    for (let row = 0; row < n; row++) {
+      if (row === col) continue;
+      const factor = m[row]![col] ?? 0;
+      if (factor === 0) continue;
+      for (let c = col; c <= n; c++) m[row]![c] = (m[row]![c] ?? 0) - factor * (m[col]![c] ?? 0);
+    }
+  }
+  return m.map((row) => ({ k: "num", v: num(row[n] ?? NaN) }));
+}
+
+function symbolicSolve(a: Expr[][], b: Expr[]): Expr[] {
+  const n = b.length;
+  const m = a.map((row, i) => [...row, b[i]!]);
+  for (let col = 0; col < n; col++) {
+    let pivot = -1;
+    for (let row = col; row < n; row++) {
+      if (!isZeroExpr(m[row]![col]!)) {
+        pivot = row;
+        break;
+      }
+    }
+    if (pivot < 0) throw new Error("Singular");
+    if (pivot !== col) [m[col], m[pivot]] = [m[pivot]!, m[col]!];
+    const div = m[col]![col]!;
+    for (let c = col; c <= n; c++) m[col]![c] = simplify(over(m[col]![c]!, div));
+    for (let row = 0; row < n; row++) {
+      if (row === col || isZeroExpr(m[row]![col]!)) continue;
+      const factor = m[row]![col]!;
+      for (let c = col; c <= n; c++) m[row]![c] = simplify(minus(m[row]![c]!, times(factor, m[col]![c]!, "*")));
+    }
+  }
+  return m.map((row) => canonRational(simplify(row[n]!)));
+}
+
+function canonRational(e: Expr): Expr {
+  if (e.k === "bin" && (e.op === "+" || e.op === "-")) {
+    const combined = combineRational(e.op, e.a, e.b);
+    if (combined) return canonRational(combined);
+  }
+  return e;
+}
+
+function combineRational(op: "+" | "-", a: Expr, b: Expr): Expr | null {
+  const left = quotient(a);
+  const right = quotient(b);
+  if (!left && !right) return null;
+  const ln = left?.numer ?? a;
+  const ld = left?.den ?? 1;
+  const rn = right?.numer ?? b;
+  const rd = right?.den ?? 1;
+  const leftScaled = simplify(times(ln, { k: "num", v: num(rd) }, "*"));
+  const rightScaled = simplify(times(rn, { k: "num", v: num(ld) }, "*"));
+  const numer = simplify(op === "+" ? plus(leftScaled, rightScaled) : minus(leftScaled, rightScaled));
+  return reduceQuotient(numer, num(ld * rd));
+}
+
+function quotient(e: Expr): { numer: Expr; den: number } | null {
+  if (e.k === "bin" && (e.op === "/" || e.op === "./") && e.b.k === "num" && e.b.v !== 0) return { numer: e.a, den: e.b.v };
+  return null;
+}
+
+function reduceQuotient(numer: Expr, den: number): Expr {
+  const d = num(den);
+  if (d === 0) throw new Error("Singular");
+  const parts = splitMul(numer);
+  if (Number.isInteger(num(parts.coeff)) && Number.isInteger(d)) {
+    const g = gcd(Math.abs(num(parts.coeff)), Math.abs(d));
+    const coeff = num(parts.coeff / g);
+    const reduced = num(d / g);
+    const body = fromMul(coeff, parts.factors);
+    if (reduced === 1) return body;
+    if (reduced === -1) return negNum(body);
+    return over(body, { k: "num", v: reduced });
+  }
+  if (d === 1) return numer;
+  if (d === -1) return negNum(numer);
+  return over(numer, { k: "num", v: d });
+}
+
+function isZeroExpr(e: Expr): boolean {
+  const s = simplify(e);
+  return s.k === "num" && s.v === 0;
+}
 
 const MATH: Record<string, (x: number) => number> = {
   sin: Math.sin,

@@ -1,6 +1,6 @@
 import { Asm, F64, I32, OP, WasmModule } from "./wasm-module.ts";
 import { type Engine, type Val, cloneVal, matrix, scalar, valData } from "./engine.ts";
-import { antiderivative, definiteIntegral, derivative, sampleSurface, simplify, type Plot } from "./calculus.ts";
+import { antiderivative, definiteIntegral, derivative, sampleSurface, simplify, solveLinear, type Plot } from "./calculus.ts";
 import { AGG, CONSTANTS, ELEM_SPEC, MAX2, MIN2, foldCall, runAgg, evalElem, type ElemSpec } from "./library.ts";
 
 export class MatlabError extends Error {
@@ -133,9 +133,41 @@ class Parser {
   }
 
   private parseStmt(): Stmt {
+    const meta = this.tryMeta();
+    if (meta) return meta;
     const fn = this.tryFnAssign();
     if (fn) return fn;
     return { assign: null, params: null, expr: this.parseExpr(false), silent: false };
+  }
+
+  private tryMeta(): Stmt | null {
+    const p = this.peek();
+    if (p.t !== "id" || (p.s !== "syms" && p.s !== "clear")) return null;
+    const next = this.toks[this.i + 1];
+    const end = !next || next.t === "eof" || next.t === "nl" || (next.t === "op" && next.s === ";");
+    const namesFollow = next?.t === "id";
+    if (p.s === "syms" && !namesFollow) return null;
+    if (p.s === "clear" && !namesFollow && !end) return null;
+    this.i++;
+    const names: string[] = [];
+    while (this.peek().t === "id") {
+      const id = this.peek();
+      if (id.t !== "id") break;
+      names.push(id.s);
+      this.i++;
+      const comma = this.peek();
+      if (comma.t === "op" && comma.s === ",") {
+        this.i++;
+        if (this.peek().t !== "id") throw new MatlabError("Syntax Error");
+      }
+    }
+    if (p.s === "syms" && !names.length) throw new MatlabError("Syntax Error");
+    return {
+      assign: null,
+      params: null,
+      expr: { k: "call", name: p.s, args: names.map((s) => ({ k: "name", s })) },
+      silent: false,
+    };
   }
 
   private tryFnAssign(): Stmt | null {
@@ -175,6 +207,13 @@ class Parser {
   private parseExpr(matrix: boolean): Expr {
     this.skipGap(matrix);
     let a = this.parseSum(matrix);
+    const eq = this.peek();
+    const eq2 = this.toks[this.i + 1];
+    if (eq.t === "op" && eq.s === "=" && eq2?.t === "op" && eq2.s === "=") {
+      this.i += 2;
+      while (this.peek().t === "sp") this.i++;
+      return { k: "bin", op: "==", a, b: this.parseSum(matrix) };
+    }
     if (!matrix && this.eat("op", ":")) {
       const mid = this.parseSum(matrix);
       if (this.eat("op", ":")) return { k: "colon", a, step: mid, b: this.parseSum(matrix) };
@@ -1347,6 +1386,171 @@ function expandCalls(expr: Expr, scope: Map<string, Val>, stack = new Set<string
   }
 }
 
+function solveCall(expr: Expr, scope: Map<string, Val>): { value: Val; label: string; bound: [string, Val][] } {
+  const listed = variableList(expr.args[expr.args.length - 1]);
+  const raw = listed ? expr.args.slice(0, -1) : expr.args;
+  const equations: Expr[] = [];
+  for (const arg of raw) {
+    if (arg.k === "mat") {
+      for (const row of arg.rows) for (const cell of row) equations.push(cell);
+    } else equations.push(arg);
+  }
+  const locked = new Set(listed ?? []);
+  const folded = equations.map((eq) => inlineVals(eq, scope, locked));
+  const vars = listed ?? inferUnknowns(folded, scope);
+  let values: Expr[];
+  try {
+    values = solveLinear(folded, vars);
+  } catch (err) {
+    throw new MatlabError(err instanceof Error ? err.message : "Singular");
+  }
+  const bound: [string, Val][] = vars.map((name, index) => {
+    const found = values[index]!;
+    const value: Val = found.k === "num" ? scalar(found.v) : { t: "sym", text: exprText(found) };
+    return [name, value];
+  });
+  const label = vars.map((name, index) => `${name} = ${exprText(values[index]!)}`).join("\n");
+  if (values.every((item) => item.k === "num")) {
+    const data = Float64Array.from(values.map((item) => (item.k === "num" ? item.v : NaN)));
+    return { value: matrix(vars.length, 1, data), label, bound };
+  }
+  return { value: { t: "sym", text: label }, label, bound };
+}
+
+function variableList(expr: Expr | undefined): string[] | null {
+  if (!expr || expr.k !== "mat") return null;
+  const names: string[] = [];
+  for (const row of expr.rows) {
+    for (const cell of row) {
+      if (cell.k !== "name") return null;
+      names.push(cell.s);
+    }
+  }
+  return names.length ? names : null;
+}
+
+function inferUnknowns(equations: Expr[], scope: Map<string, Val>): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const walk = (e: Expr) => {
+    if (e.k === "name") {
+      if (seen.has(e.s) || CONSTANTS[e.s] !== undefined) return;
+      const value = scope.get(e.s);
+      if (value && value.t !== "sym") return;
+      seen.add(e.s);
+      names.push(e.s);
+      return;
+    }
+    if (e.k === "unary" || e.k === "trans") walk(e.a);
+    else if (e.k === "bin") {
+      walk(e.a);
+      walk(e.b);
+    } else if (e.k === "call") e.args.forEach(walk);
+    else if (e.k === "mat") e.rows.forEach((row) => row.forEach(walk));
+    else if (e.k === "colon") {
+      walk(e.a);
+      if (e.step) walk(e.step);
+      walk(e.b);
+    }
+  };
+  equations.forEach(walk);
+  return names;
+}
+
+function applyMeta(stmt: Stmt, scope: Map<string, Val>): boolean {
+  if (stmt.assign || stmt.params || stmt.expr.k !== "call") return false;
+  const name = stmt.expr.name.toLowerCase();
+  if (name !== "syms" && name !== "clear") return false;
+  if (!stmt.expr.args.every((arg) => arg.k === "name")) return false;
+  if (name === "syms") {
+    if (!stmt.expr.args.length) throw new MatlabError("Syntax Error");
+    for (const arg of stmt.expr.args) {
+      if (arg.k !== "name") continue;
+      if (CONSTANTS[arg.s] !== undefined) throw new MatlabError(`Constant '${arg.s}'`);
+      scope.set(arg.s, { t: "sym", text: arg.s });
+    }
+    return true;
+  }
+  if (!stmt.expr.args.length) {
+    for (const key of [...scope.keys()]) scope.delete(key);
+    return true;
+  }
+  for (const arg of stmt.expr.args) {
+    if (arg.k === "name") scope.delete(arg.s);
+  }
+  return true;
+}
+
+function hasSymbolic(expr: Expr, scope: Map<string, Val>): boolean {
+  switch (expr.k) {
+    case "name":
+      return scope.get(expr.s)?.t === "sym";
+    case "unary":
+    case "trans":
+      return hasSymbolic(expr.a, scope);
+    case "bin":
+      return hasSymbolic(expr.a, scope) || hasSymbolic(expr.b, scope);
+    case "colon":
+      return hasSymbolic(expr.a, scope) || (!!expr.step && hasSymbolic(expr.step, scope)) || hasSymbolic(expr.b, scope);
+    case "mat":
+      return expr.rows.some((row) => row.some((cell) => hasSymbolic(cell, scope)));
+    case "call":
+      return expr.args.some((arg) => hasSymbolic(arg, scope));
+    default:
+      return false;
+  }
+}
+
+function inlineVals(expr: Expr, scope: Map<string, Val>, locked = new Set<string>(), stack = new Set<string>()): Expr {
+  switch (expr.k) {
+    case "num":
+      return expr;
+    case "name": {
+      if (locked.has(expr.s) || stack.has(expr.s)) return expr;
+      const value = scope.get(expr.s);
+      if (value?.t === "s") return { k: "num", v: value.v };
+      if (value?.t === "sym" && value.text !== expr.s) {
+        const next = new Set(stack);
+        next.add(expr.s);
+        return inlineVals(parseOne(value.text), scope, locked, next);
+      }
+      return expr;
+    }
+    case "unary":
+      return { k: "unary", op: "-", a: inlineVals(expr.a, scope, locked, stack) };
+    case "trans":
+      return { k: "trans", a: inlineVals(expr.a, scope, locked, stack) };
+    case "bin":
+      return {
+        k: "bin",
+        op: expr.op,
+        a: inlineVals(expr.a, scope, locked, stack),
+        b: inlineVals(expr.b, scope, locked, stack),
+      };
+    case "colon":
+      return {
+        k: "colon",
+        a: inlineVals(expr.a, scope, locked, stack),
+        step: expr.step ? inlineVals(expr.step, scope, locked, stack) : null,
+        b: inlineVals(expr.b, scope, locked, stack),
+      };
+    case "mat":
+      return { k: "mat", rows: expr.rows.map((row) => row.map((cell) => inlineVals(cell, scope, locked, stack))) };
+    case "call": {
+      const next = new Set(locked);
+      const id = expr.name.toLowerCase();
+      if ((id === "diff" || id === "integ" || id === "plot") && expr.args[1]?.k === "name") next.add(expr.args[1].s);
+      if (id === "surf") {
+        if (expr.args[1]?.k === "name") next.add(expr.args[1].s);
+        if (expr.args[4]?.k === "name") next.add(expr.args[4].s);
+      }
+      return { k: "call", name: expr.name, args: expr.args.map((arg) => inlineVals(arg, scope, next, stack)), prime: expr.prime };
+    }
+    default:
+      return expr;
+  }
+}
+
 function hasFree(expr: Expr, scope: Map<string, Val>): boolean {
   switch (expr.k) {
     case "num":
@@ -1391,8 +1595,22 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
         if (!stmt.silent) printed.push({ name: stmt.assign, value: fn });
         continue;
       }
+      if (applyMeta(stmt, scope)) continue;
       const user = usesUserFn(stmt.expr, scope);
       let expr = expandCalls(stmt.expr, scope);
+      if (expr.k === "call" && expr.name.toLowerCase() === "solve") {
+        const solved = solveCall(expr, scope);
+        for (const [name, value] of solved.bound) scope.set(name, value);
+        if (stmt.assign) scope.set(stmt.assign, solved.value);
+        else if (!stmt.silent) {
+          scope.set("ans", solved.value);
+          printed.push({ name: "ans", value: solved.value });
+          pushed.push(solved.value);
+          pushedExpr.push(solved.label);
+        }
+        continue;
+      }
+      if (hasSymbolic(expr, scope)) expr = inlineVals(expr, scope);
       const calc = calculusStmt(expr, scope);
       if (calc) {
         if (calc.plot) plot = calc.plot;
@@ -1409,9 +1627,9 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
         }
         continue;
       }
-      if (user && hasFree(expr, scope)) {
+      if (hasSymbolic(expr, scope) || (user && hasFree(expr, scope))) {
         const simple = simplify(expr);
-        if (simple.k !== "num" && hasFree(simple, scope)) {
+        if (simple.k !== "num" && (hasSymbolic(simple, scope) || hasFree(simple, scope))) {
           const text = exprText(simple);
           const value: Val = { t: "sym", text };
           if (stmt.assign) {
@@ -1459,6 +1677,7 @@ function exprText(e: Expr): string {
     case "unary":
       return `-${exprAtom(exprText(e.a))}`;
     case "bin":
+      if (e.op === "==") return `${exprText(e.a)}==${exprText(e.b)}`;
       return `${exprSide(exprText(e.a), e.op, "L")}${e.op}${exprSide(exprText(e.b), e.op, "R")}`;
     case "trans":
       return `${exprAtom(exprText(e.a))}'`;

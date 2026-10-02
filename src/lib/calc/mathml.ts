@@ -57,6 +57,13 @@ function render(e: Expr): Piece {
 }
 
 function renderBin(op: string, a: Expr, b: Expr): Piece {
+  if (op === "==") {
+    return {
+      xml: `<mrow>${paren(left, 0.5)}<mo>=</mo>${paren(right, 0.5)}</mrow>`,
+      prec: 0,
+      atom: "other",
+    };
+  }
   if (op === "/" || op === "./") {
     return { xml: `<mfrac>${render(a).xml}${render(b).xml}</mfrac>`, prec: 6, atom: "other" };
   }

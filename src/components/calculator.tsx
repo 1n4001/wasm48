@@ -239,20 +239,29 @@ export function Calculator() {
           <ul className="flex flex-col gap-2">
             {face.vars.length === 0 ? <li className="bg-body px-3 py-2 text-sm text-muted">No named variables yet.</li> : null}
             {face.vars.map((row) => (
-              <li key={row.name}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    sessionRef.current?.typeText(row.name);
-                    commandRef.current?.focus();
-                  }}
-                  className="flex w-full items-baseline justify-between gap-3 bg-body px-3 py-2 text-left"
-                >
-                  <span className="font-mono text-legend-l">{row.name}</span>
-                  <span className="min-w-0 text-ink">
-                    <MathView source={row.text} />
-                  </span>
-                </button>
+              <li key={row.id}>
+                <div className="flex items-stretch gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sessionRef.current?.typeText(row.name);
+                      commandRef.current?.focus();
+                    }}
+                    className="flex min-w-0 flex-1 items-baseline justify-between gap-3 bg-body px-3 py-2 text-left"
+                  >
+                    <span className="font-mono text-legend-l">{row.name}</span>
+                    <span className="min-w-0 text-ink">{row.symbol ? <span className="text-muted">symbol</span> : <MathView source={row.text} />}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Delete ${row.id}`}
+                    title="Delete"
+                    onClick={() => sessionRef.current?.forget(row.id)}
+                    className="bg-body px-3 text-muted"
+                  >
+                    ×
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

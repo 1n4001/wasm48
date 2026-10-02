@@ -178,7 +178,7 @@ export type FaceState = {
   menuLabels: string[];
   bytes: number;
   listing: string;
-  vars: { name: string; text: string }[];
+  vars: { id: string; name: string; text: string; symbol: boolean }[];
   log: LogLine[];
   xFull: string;
   plot: PlotSpec | null;
@@ -238,8 +238,10 @@ export class Session {
     const vars = [...this.scope.entries()]
       .filter(([name]) => name !== "ans")
       .map(([name, value]) => ({
+        id: name,
         name: value.t === "fn" ? `${name}(${value.params.join(", ")})` : name,
         text: formatMath(value),
+        symbol: value.t === "sym" && value.text === name,
       }));
     return {
       levels,
@@ -322,6 +324,12 @@ export class Session {
   setCommand(text: string) {
     this.message = null;
     this.line = text;
+    this.emit();
+  }
+
+  forget(name: string) {
+    if (!this.scope.delete(name)) return;
+    this.message = null;
     this.emit();
   }
 
