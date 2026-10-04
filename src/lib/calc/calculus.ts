@@ -5,7 +5,7 @@ export type Plot =
   | { kind: "xyz"; label: string; xs: number[]; ys: number[]; zs: number[][] };
 
 export function derivative(expr: Expr, variable: string): Expr {
-  return simplify(diffExpr(expr, variable));
+  return simplify(diffExpr(simplify(expr), variable));
 }
 
 export function antiderivative(expr: Expr, variable: string): Expr {
@@ -416,6 +416,7 @@ function simpBin(op: string, a: Expr, b: Expr): Expr {
   const av = a.k === "num" ? a.v : null;
   const bv = b.k === "num" ? b.v : null;
   if (av !== null && bv !== null && !((op === "/" || op === "./" || op === "\\") && bv === 0)) {
+    if ((op === "/" || op === "./") && Number.isInteger(av) && Number.isInteger(bv)) return intQuotient(av, bv);
     const n = applyConst(op, av, bv);
     if (n !== null) return { k: "num", v: num(n) };
   }
@@ -482,11 +483,26 @@ function mulJoined(coeff: number, factors: Expr[]): Expr {
           kept.push(...inner.factors);
           continue;
         }
+      } else if (factor.a.k === "num") {
+        coeff = num((coeff * factor.a.v) / den);
+        continue;
       }
     }
     kept.push(factor);
   }
   return fromMul(num(coeff), kept);
+}
+
+function intQuotient(numer: number, den: number): Expr {
+  const g = gcd(Math.abs(numer), Math.abs(den));
+  let n = numer / g;
+  let d = den / g;
+  if (d < 0) {
+    n = -n;
+    d = -d;
+  }
+  if (d === 1) return { k: "num", v: num(n) };
+  return over({ k: "num", v: num(n) }, { k: "num", v: num(d) });
 }
 
 function gcd(a: number, b: number): number {

@@ -1,7 +1,8 @@
 import { Asm, F64, I32, OP, WasmModule } from "./wasm-module.ts";
 import { type Engine, type Val, cloneVal, matrix, scalar, valData } from "./engine.ts";
 import { antiderivative, definiteIntegral, derivative, sampleSurface, simplify, solveLinear, type Plot } from "./calculus.ts";
-import { AGG, CONSTANTS, ELEM_SPEC, MAX2, MIN2, foldCall, runAgg, evalElem, type ElemSpec } from "./library.ts";
+import { AGG, CONSTANTS, ELEM_SPEC, MAX2, MIN2, convertRadix, foldCall, isRadix, runAgg, evalElem, type ElemSpec, type RadixIn } from "./library.ts";
+import { quoteText } from "./format.ts";
 
 export class MatlabError extends Error {
   constructor(message: string) {
@@ -18,11 +19,13 @@ export type Expr =
   | { k: "trans"; a: Expr }
   | { k: "call"; name: string; args: Expr[]; prime?: boolean }
   | { k: "mat"; rows: Expr[][] }
-  | { k: "colon"; a: Expr; step: Expr | null; b: Expr };
+  | { k: "colon"; a: Expr; step: Expr | null; b: Expr }
+  | { k: "str"; s: string };
 
 type Tok =
   | { t: "num"; v: number }
   | { t: "id"; s: string }
+  | { t: "str"; s: string }
   | { t: "op"; s: string }
   | { t: "sp" }
   | { t: "nl" }
@@ -30,7 +33,7 @@ type Tok =
 
 type Stmt = { assign: string | null; params: string[] | null; expr: Expr; silent: boolean };
 
-const SINGLES = new Set(["+", "-", "*", "/", "\\", "^", "(", ")", "[", "]", ";", ",", "'", "=", ":"]);
+const SINGLES = new Set(["+", "-", "*", "/", "\\", "^", "(", ")", "[", "]", ";", ",", "'", "=", ":", "&", "|"]);
 
 function lex(src: string): Tok[] {
   const out: Tok[] = [];
@@ -56,6 +59,50 @@ function lex(src: string): Tok[] {
       out.push({ t: "op", s: src.slice(i, i + 2) });
       i += 2;
       continue;
+    }
+    if (c === "0" && i + 1 < src.length && "xXbB".includes(src[i + 1]!)) {
+      const hex = src[i + 1]!.toLowerCase() === "x";
+      const m = (hex ? /^0[xX]([0-9a-fA-F]+)/ : /^0[bB]([01]+)/).exec(src.slice(i));
+      if (m?.[1]) {
+        out.push({ t: "num", v: parseInt(m[1], hex ? 16 : 2) });
+        i += m[0].length;
+        continue;
+      }
+    }
+    const two = src.slice(i, i + 2);
+    if (two === "<<" || two === ">>") {
+      out.push({ t: "op", s: two });
+      i += 2;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      const prev = out[out.length - 1];
+      const postfix =
+        c === "'" &&
+        !!prev &&
+        (prev.t === "num" || prev.t === "id" || prev.t === "str" || (prev.t === "op" && (prev.s === ")" || prev.s === "]" || prev.s === "'")));
+      if (!postfix) {
+        let s = "";
+        i++;
+        while (i < src.length) {
+          const ch = src[i]!;
+          if (ch === "\n") throw new MatlabError("Syntax Error");
+          if (ch === c) {
+            if (src[i + 1] === c) {
+              s += c;
+              i += 2;
+              continue;
+            }
+            i++;
+            out.push({ t: "str", s });
+            break;
+          }
+          s += ch;
+          i++;
+        }
+        if (out[out.length - 1]?.t !== "str") throw new MatlabError("Syntax Error");
+        continue;
+      }
     }
     if (/[0-9.]/.test(c)) {
       const m = /^((?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/.exec(src.slice(i));
@@ -206,27 +253,27 @@ class Parser {
 
   private parseExpr(matrix: boolean): Expr {
     this.skipGap(matrix);
-    let a = this.parseSum(matrix);
+    let a = this.parseBor(matrix);
     const eq = this.peek();
     const eq2 = this.toks[this.i + 1];
     if (eq.t === "op" && eq.s === "=" && eq2?.t === "op" && eq2.s === "=") {
       this.i += 2;
       while (this.peek().t === "sp") this.i++;
-      return { k: "bin", op: "==", a, b: this.parseSum(matrix) };
+      return { k: "bin", op: "==", a, b: this.parseBor(matrix) };
     }
     if (!matrix && this.eat("op", ":")) {
-      const mid = this.parseSum(matrix);
-      if (this.eat("op", ":")) return { k: "colon", a, step: mid, b: this.parseSum(matrix) };
+      const mid = this.parseBor(matrix);
+      if (this.eat("op", ":")) return { k: "colon", a, step: mid, b: this.parseBor(matrix) };
       return { k: "colon", a, step: null, b: mid };
     }
     if (matrix && this.peek().t === "op" && this.peek().t === "op") {
       const op = this.peek();
       if (op.t === "op" && op.s === ":") {
         this.i++;
-        const mid = this.parseSum(matrix);
+        const mid = this.parseBor(matrix);
         if (this.peek().t === "op" && (this.peek() as { s: string }).s === ":") {
           this.i++;
-          return { k: "colon", a, step: mid, b: this.parseSum(matrix) };
+          return { k: "colon", a, step: mid, b: this.parseBor(matrix) };
         }
         return { k: "colon", a, step: null, b: mid };
       }
@@ -234,14 +281,56 @@ class Parser {
     return a;
   }
 
+  private parseBor(matrix: boolean): Expr {
+    return this.parseBit(matrix, "|", () => this.parseBand(matrix));
+  }
+
+  private parseBand(matrix: boolean): Expr {
+    return this.parseBit(matrix, "&", () => this.parseSum(matrix));
+  }
+
+  private parseBit(matrix: boolean, op: string, lower: () => Expr): Expr {
+    let left = lower();
+    while (true) {
+      if (matrix && (this.peek().t === "sp" || this.peek().t === "nl")) break;
+      this.skipGap(matrix);
+      const p = this.peek();
+      if (p.t === "op" && p.s === op) {
+        this.i++;
+        while (this.peek().t === "sp") this.i++;
+        left = { k: "bin", op, a: left, b: lower() };
+        continue;
+      }
+      break;
+    }
+    return left;
+  }
+
   private parseSum(matrix: boolean): Expr {
-    let left = this.parseMul(matrix);
+    let left = this.parseShift(matrix);
     while (true) {
       if (matrix && (this.peek().t === "sp" || this.peek().t === "nl")) break;
       this.skipGap(matrix);
       if (matrix && this.peek().t === "sp") break;
       const p = this.peek();
       if (p.t === "op" && (p.s === "+" || p.s === "-")) {
+        this.i++;
+        while (this.peek().t === "sp") this.i++;
+        left = { k: "bin", op: p.s, a: left, b: this.parseShift(matrix) };
+        continue;
+      }
+      break;
+    }
+    return left;
+  }
+
+  private parseShift(matrix: boolean): Expr {
+    let left = this.parseMul(matrix);
+    while (true) {
+      if (matrix && (this.peek().t === "sp" || this.peek().t === "nl")) break;
+      this.skipGap(matrix);
+      const p = this.peek();
+      if (p.t === "op" && (p.s === "<<" || p.s === ">>")) {
         this.i++;
         while (this.peek().t === "sp") this.i++;
         left = { k: "bin", op: p.s, a: left, b: this.parseMul(matrix) };
@@ -316,6 +405,10 @@ class Parser {
     if (p.t === "num") {
       this.i++;
       return { k: "num", v: p.v };
+    }
+    if (p.t === "str") {
+      this.i++;
+      return { k: "str", s: p.s };
     }
     if (p.t === "id") {
       this.i++;
@@ -526,6 +619,7 @@ class Compiler {
         const v = getVar(this.scope, e.s);
         if (!v) this.fail(`Undefined Name '${e.s}'`);
         if (v.t === "sym") this.fail("Symbolic");
+        if (v.t === "txt") this.fail("Not a number");
         if (v.t === "fn") this.fail(`Call ${e.s}(...)`);
         return this.slotFromVal(v);
       }
@@ -568,6 +662,10 @@ class Compiler {
     if (op === ".*") return this.ewBroadcast(a, b, 2);
     if (op === "./") return this.ewBroadcast(a, b, 3);
     if (op === ".\\") return this.ewBroadcast(b, a, 3);
+    if (op === "&") return this.hostElem(59, [a, b]);
+    if (op === "|") return this.hostElem(60, [a, b]);
+    if (op === "<<") return this.hostElem(62, [a, b]);
+    if (op === ">>") return this.hostElem(63, [a, b]);
     void full;
     this.fail("Syntax Error");
   }
@@ -1090,6 +1188,11 @@ class Compiler {
       return { ptr: dest, r: 1, c: 2 };
     }
     if (id === "stk") this.fail("Bad Level");
+    if (isRadix(id)) {
+      const value = radixCall(id, args, this.scope, this.engine);
+      if (value.t !== "s" && value.t !== "m") this.fail("Not a number");
+      return this.slotFromVal(value);
+    }
     this.fail(`Undefined Function '${name}'`);
   }
 
@@ -1119,6 +1222,46 @@ function foldScalar(e: Expr, scope: Map<string, Val>): number | null {
   } catch {
     return null;
   }
+}
+
+function bitFold(op: (x: number, y: number) => number, a: number, b: number): number {
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return NaN;
+  return op(Math.trunc(a) | 0, Math.trunc(b) | 0);
+}
+
+function radixCall(name: string, args: Expr[], scope: Map<string, Val>, engine: Engine): Val {
+  try {
+    const out = convertRadix(
+      name,
+      args.map((arg) => radixIn(arg, scope, engine)),
+    );
+    return out.t === "n" ? scalar(out.v) : { t: "txt", s: out.v };
+  } catch (err) {
+    if (err instanceof MatlabError) throw err;
+    throw new MatlabError(err instanceof Error ? err.message : "Bad Digit");
+  }
+}
+
+function radixIn(e: Expr, scope: Map<string, Val>, engine: Engine): RadixIn {
+  if (e.k === "str") return { t: "s", v: e.s };
+  if (e.k === "num") return { t: "n", v: e.v };
+  if (e.k === "name") {
+    const v = getVar(scope, e.s);
+    if (!v) throw new MatlabError(`Undefined Name '${e.s}'`);
+    if (v.t === "txt") return { t: "s", v: v.s };
+    if (v.t === "s") return { t: "n", v: v.v };
+    throw new MatlabError("Not a number");
+  }
+  if (e.k === "call" && isRadix(e.name)) {
+    const v = radixCall(e.name, e.args, scope, engine);
+    if (v.t === "txt") return { t: "s", v: v.s };
+    if (v.t === "s") return { t: "n", v: v.v };
+    throw new MatlabError("Not a number");
+  }
+  const compiled = new Compiler(engine, scope).finish(e);
+  const value = execute(compiled.bytes, engine, compiled.slot);
+  if (value.t !== "s") throw new MatlabError("Not a number");
+  return { t: "n", v: value.v };
 }
 
 function fold(e: Expr, scope: Map<string, Val>): number {
@@ -1152,6 +1295,14 @@ function fold(e: Expr, scope: Map<string, Val>): number {
         case "^":
         case ".^":
           return a ** b;
+        case "&":
+          return bitFold((x, y) => x & y, a, b);
+        case "|":
+          return bitFold((x, y) => x | y, a, b);
+        case "<<":
+          return bitFold((x, y) => x << y, a, b);
+        case ">>":
+          return bitFold((x, y) => x >> y, a, b);
         default:
           throw new Error("op");
       }
@@ -1611,6 +1762,17 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
         continue;
       }
       if (hasSymbolic(expr, scope)) expr = inlineVals(expr, scope);
+      if (expr.k === "call" && isRadix(expr.name)) {
+        const value = radixCall(expr.name, expr.args, scope, engine);
+        if (stmt.assign) scope.set(stmt.assign, value);
+        else if (!stmt.silent) {
+          scope.set("ans", value);
+          printed.push({ name: "ans", value });
+          pushed.push(value);
+          pushedExpr.push(exprText(stmt.expr));
+        }
+        continue;
+      }
       const calc = calculusStmt(expr, scope);
       if (calc) {
         if (calc.plot) plot = calc.plot;
@@ -1632,6 +1794,7 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
         if (simple.k !== "num" && (hasSymbolic(simple, scope) || hasFree(simple, scope))) {
           const text = exprText(simple);
           const value: Val = { t: "sym", text };
+          const shown = exprText(stmt.expr);
           if (stmt.assign) {
             scope.set(stmt.assign, value);
             if (!stmt.silent) printed.push({ name: stmt.assign, value });
@@ -1639,7 +1802,7 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
             scope.set("ans", value);
             printed.push({ name: "ans", value });
             pushed.push(value);
-            pushedExpr.push(text);
+            pushedExpr.push(shown);
           }
           continue;
         }
@@ -1672,6 +1835,8 @@ function exprText(e: Expr): string {
   switch (e.k) {
     case "num":
       return String(e.v);
+    case "str":
+      return quoteText(e.s);
     case "name":
       return e.s;
     case "unary":
@@ -1693,8 +1858,12 @@ function exprText(e: Expr): string {
 }
 
 const BIN_PREC: Record<string, number> = {
+  "|": 0.2,
+  "&": 0.4,
   "+": 1,
   "-": 1,
+  "<<": 1.5,
+  ">>": 1.5,
   "*": 2,
   "/": 2,
   "\\": 2,
@@ -1730,12 +1899,14 @@ function topPrec(expr: string): number {
     else if (c === ")" || c === "]") depth = Math.max(0, depth - 1);
     else if (depth === 0) {
       const two = expr.slice(i, i + 2);
-      if (two === ".*" || two === "./" || two === ".\\" || two === ".^") {
+      if (two === ".*" || two === "./" || two === ".\\" || two === ".^" || two === "<<" || two === ">>") {
         min = Math.min(min, BIN_PREC[two] ?? 2);
         i++;
-      } else if ((c === "+" || c === "-") && i > 0 && !"([+-*/\\^".includes(expr[i - 1]!)) {
+      } else if ((c === "+" || c === "-") && i > 0 && !"([+-*/\\^<>&|".includes(expr[i - 1]!)) {
         min = Math.min(min, 1);
-      } else if (c === "*" || c === "/" || c === "\\") min = Math.min(min, 2);
+      } else if (c === "&") min = Math.min(min, 0.4);
+      else if (c === "|") min = Math.min(min, 0.2);
+      else if (c === "*" || c === "/" || c === "\\") min = Math.min(min, 2);
       else if (c === "^") min = Math.min(min, 3);
     }
   }

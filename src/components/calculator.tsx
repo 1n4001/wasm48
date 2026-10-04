@@ -72,8 +72,17 @@ export function Calculator() {
     };
     draw();
     const unsubscribe = session.subscribe(draw);
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "d") return;
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest("textarea")) return;
+      event.preventDefault();
+      session.press("drop");
+    };
+    window.addEventListener("keydown", onKey);
     return () => {
       unsubscribe();
+      window.removeEventListener("keydown", onKey);
     };
   }, []);
 
@@ -98,7 +107,7 @@ export function Calculator() {
           <p className="text-2xl leading-none font-bold tracking-[0.18em]">WASM48</p>
         </header>
         <div className="flex items-stretch gap-3">
-          <div className="lcd-well flex max-h-[50vh] min-h-0 min-w-0 flex-1 flex-col self-start">
+          <div className="lcd-well flex min-h-0 min-w-0 flex-1 flex-col self-start">
             <div className="lcd flex min-h-0 w-full flex-1 flex-col gap-2 px-3 py-2">
               <div className="flex items-center justify-between text-xs tracking-widest">
                 <span className="flex gap-3">

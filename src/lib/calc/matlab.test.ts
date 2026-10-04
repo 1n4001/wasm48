@@ -27,6 +27,32 @@ function mat(src: string) {
 }
 
 describe("matlab wasm", () => {
+  it("shifts, masks, and converts radix", () => {
+    assert.equal(num("1 << 8"), 256);
+    assert.equal(num("0xF0 & 0x3C"), 0x30);
+    assert.equal(num("5 | 2"), 7);
+    assert.equal(num("bitxor(5, 1)"), 4);
+    assert.equal(num("xor(5, 1)"), 4);
+    assert.equal(num("bitshift(1, 4)"), 16);
+    assert.equal(num("bitshift(16, -2)"), 4);
+    assert.equal(num("-16 >> 2"), -4);
+    assert.equal(num("hex2dec('FF')"), 255);
+    assert.equal(num("bit2dec('1010')"), 10);
+    assert.equal(num("dec2dec('42')"), 42);
+    assert.equal(num("0b1010"), 10);
+    assert.equal(num("hex2dec('FF') + 1"), 256);
+    const hex = run("dec2hex(255)").printed.at(-1)?.value;
+    assert.equal(hex?.t, "txt");
+    if (hex?.t === "txt") assert.equal(hex.s, "FF");
+    const bits = run("hex2bit('A')").printed.at(-1)?.value;
+    assert.equal(bits?.t, "txt");
+    if (bits?.t === "txt") assert.equal(bits.s, "1010");
+    const back = run("bit2hex('1111')").printed.at(-1)?.value;
+    assert.equal(back?.t, "txt");
+    if (back?.t === "txt") assert.equal(back.s, "F");
+    assert.equal(num("bit2dec(hex2bit('A'))"), 10);
+  });
+
   it("evaluates scalar arithmetic and powers", () => {
     assert.equal(num("2+3*4"), 14);
     assert.equal(num("-2^2"), -4);

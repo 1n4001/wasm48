@@ -81,10 +81,89 @@ export const ELEM_SPEC: Record<string, ElemSpec> = {
   reynolds: { op: 56, min: 4, max: 4 },
   stokes: { op: 57, min: 3, max: 3 },
   qflow: { op: 58, min: 2, max: 2 },
+  bitand: { op: 59, min: 2, max: 2 },
+  bitor: { op: 60, min: 2, max: 2 },
+  bitxor: { op: 61, min: 2, max: 2 },
+  xor: { op: 61, min: 2, max: 2 },
+  bitshift: { op: 64, min: 2, max: 2 },
 };
 
 export const MIN2 = 27;
 export const MAX2 = 28;
+
+function i32(n: number): number | null {
+  if (!Number.isFinite(n)) return null;
+  return Math.trunc(n) | 0;
+}
+
+function bit2(op: (x: number, y: number) => number, a: number, b: number): number {
+  const x = i32(a);
+  const y = i32(b);
+  if (x === null || y === null) return NaN;
+  return op(x, y);
+}
+
+const RADIX = new Set(["hex2dec", "bit2hex", "bit2dec", "dec2dec", "dec2hex", "hex2bit"]);
+
+export function isRadix(name: string): boolean {
+  return RADIX.has(name.toLowerCase());
+}
+
+export type RadixIn = { t: "n"; v: number } | { t: "s"; v: string };
+
+export function convertRadix(name: string, args: RadixIn[]): { t: "n"; v: number } | { t: "s"; v: string } {
+  const id = name.toLowerCase();
+  if (!RADIX.has(id)) throw new Error("Undefined Function");
+  const width = args.length === 2 && args[1]?.t === "n" ? Math.trunc(args[1].v) : 0;
+  if (args.length < 1 || args.length > 2) throw new Error(args.length < 1 ? "Too Few Arguments" : "Too Many Arguments");
+  const src = args[0]!;
+  if (id === "dec2hex") return { t: "s", v: formatDigits(asInt(src), 16, width) };
+  if (id === "dec2dec") return { t: "n", v: src.t === "n" ? src.v : parseDigits(src.v, 10) };
+  if (id === "hex2dec") return { t: "n", v: parseDigits(asText(src), 16) };
+  if (id === "bit2dec") return { t: "n", v: parseDigits(asText(src), 2) };
+  if (id === "hex2bit") return { t: "s", v: changeBase(asText(src), 16, 2, width || 4) };
+  return { t: "s", v: changeBase(asText(src), 2, 16, width) };
+}
+
+function asText(src: RadixIn): string {
+  if (src.t === "s") return src.v;
+  if (!Number.isFinite(src.v)) throw new Error("Bad Digit");
+  return String(Math.trunc(src.v));
+}
+
+function asInt(src: RadixIn): bigint {
+  if (src.t === "s") return BigInt(parseDigits(src.v, 10));
+  if (!Number.isFinite(src.v)) throw new Error("Bad Digit");
+  const n = Math.trunc(src.v);
+  if (n < 0) return BigInt(n) & 0xffffffffn;
+  if (!Number.isSafeInteger(n)) throw new Error("Bad Digit");
+  return BigInt(n);
+}
+
+function parseDigits(text: string, base: number): number {
+  let body = text.trim().replace(/[\s_]/g, "");
+  if (base === 16) body = body.replace(/^0[xX]/, "");
+  if (base === 2) body = body.replace(/^0[bB]/, "");
+  if (!body) throw new Error("Bad Digit");
+  const alphabet = base === 16 ? /^[0-9a-fA-F]+$/ : base === 2 ? /^[01]+$/ : /^[0-9]+$/;
+  if (!alphabet.test(body)) throw new Error("Bad Digit");
+  const n = BigInt(base === 16 ? `0x${body}` : base === 2 ? `0b${body}` : body);
+  if (n > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Bad Digit");
+  return Number(n);
+}
+
+function formatDigits(n: bigint, base: number, width: number): string {
+  const digits = n.toString(base).toUpperCase();
+  return width > digits.length ? digits.padStart(width, "0") : digits;
+}
+
+function changeBase(text: string, from: number, to: number, group: number): string {
+  const n = BigInt(parseDigits(text, from));
+  const digits = formatDigits(n, to, 0);
+  if (group <= 1) return digits;
+  const pad = (group - (digits.length % group)) % group;
+  return `${"0".repeat(pad)}${digits}`;
+}
 
 export const AGG = {
   mean: 1,
@@ -375,6 +454,22 @@ export function evalElem(op: number, args: number[]): number {
       return 6 * Math.PI * a * b * c;
     case 58:
       return a * b;
+    case 59:
+      return bit2((x, y) => x & y, a, b);
+    case 60:
+      return bit2((x, y) => x | y, a, b);
+    case 61:
+      return bit2((x, y) => x ^ y, a, b);
+    case 62:
+      return bit2((x, y) => x << y, a, b);
+    case 63:
+      return bit2((x, y) => x >> y, a, b);
+    case 64: {
+      const x = i32(a);
+      const k = i32(b);
+      if (x === null || k === null) return NaN;
+      return k >= 0 ? x << k : x >> -k;
+    }
     default:
       return NaN;
   }
@@ -618,6 +713,18 @@ export const FUNCTIONS: FunctionRow[] = [
   { group: "Fluids", name: "reynolds", args: "rho, v, L, mu", about: "Reynolds number ρvL/μ.", example: "reynolds(997, 1, 0.1, 1e-3)" },
   { group: "Fluids", name: "stokes", args: "mu, r, v", about: "Stokes drag 6πμrv.", example: "stokes(1e-3, 0.001, 0.2)" },
   { group: "Fluids", name: "qflow", args: "A, v", about: "Volume flow rate A·v.", example: "qflow(0.01, 2)" },
+  { group: "Bits", name: "<<", args: "a, n", about: "Shift left. 32-bit. 1<<8 is 256.", example: "1<<8" },
+  { group: "Bits", name: ">>", args: "a, n", about: "Arithmetic shift right. 32-bit.", example: "-16>>2" },
+  { group: "Bits", name: "&", args: "a, b", about: "Bitwise and. 32-bit.", example: "0xF0 & 0x3C" },
+  { group: "Bits", name: "|", args: "a, b", about: "Bitwise or. 32-bit.", example: "5 | 2" },
+  { group: "Bits", name: "bitxor", args: "a, b", about: "Bitwise xor. xor(a, b) is the same.", example: "bitxor(5, 1)" },
+  { group: "Bits", name: "bitshift", args: "a, n", about: "Shift left if n > 0, else right.", example: "bitshift(1, 4)" },
+  { group: "Bits", name: "hex2dec", args: "s", about: "Hex digits to a number. Quote the digits.", example: "hex2dec('FF')" },
+  { group: "Bits", name: "dec2hex", args: "n", about: "Number to hex digits. dec2hex(n, w) pads to w.", example: "dec2hex(255)" },
+  { group: "Bits", name: "bit2dec", args: "s", about: "Bit digits to a number.", example: "bit2dec('1010')" },
+  { group: "Bits", name: "hex2bit", args: "s", about: "Hex digits to bits, 4 per digit.", example: "hex2bit('A')" },
+  { group: "Bits", name: "bit2hex", args: "s", about: "Bit digits to hex.", example: "bit2hex('1111')" },
+  { group: "Bits", name: "dec2dec", args: "s", about: "Decimal digits to a number.", example: "dec2dec('42')" },
   { group: "Linear algebra", name: "solve", args: "eqs, vars", about: "Solve a square linear system. Equations use ==. A\\b solves a numeric matrix.", example: "solve(2*x+y==5, x-y==1, [x, y])" },
   { group: "Linear algebra", name: "dot", args: "a, b", about: "Dot product.", example: "dot([1 2], [3 4])" },
   { group: "Linear algebra", name: "cross", args: "a, b", about: "Cross product of length-3 vectors.", example: "cross([1;0;0], [0;1;0])" },

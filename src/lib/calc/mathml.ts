@@ -16,6 +16,8 @@ function render(e: Expr): Piece {
   switch (e.k) {
     case "num":
       return renderNum(e.v);
+    case "str":
+      return { xml: `<mtext>${escapeXml(e.s)}</mtext>`, prec: 6, atom: "other" };
     case "name":
       return renderName(e.s);
     case "unary": {
@@ -230,6 +232,10 @@ function renderName(name: string): Piece {
   if (name === "pi") return { xml: "<mi>π</mi>", prec: 6, atom: "id" };
   const variant = name.length === 1 ? "" : ` mathvariant="normal"`;
   return { xml: `<mi${variant}>${esc(name)}</mi>`, prec: 6, atom: "id" };
+}
+
+function escapeXml(s: string): string {
+  return s.replace(/&/g, "&").replace(/</g, "<").replace(/>/g, ">");
 }
 
 function paren(piece: Piece, min: number): string {

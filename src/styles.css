@@ -68,19 +68,21 @@
     background: var(--color-lcd-well);
     border-radius: 0.85rem;
     padding: 0.35rem;
+    min-height: 450px;
+    max-height: max(450px, 50vh);
     box-shadow: inset 0 2px 6px rgb(0 0 0 / 0.45);
   }
   .lcd {
     background: var(--color-lcd);
     color: var(--color-lcd-ink);
     border-radius: 0.55rem;
+    min-height: calc(450px - 0.7rem);
     font-family: var(--font-mono);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, black 18%, transparent);
   }
   .lcd-stack {
     flex: 1 1 auto;
     min-height: 0;
-    max-height: calc(50vh - 5.5rem);
     overflow: auto;
     scrollbar-width: none;
   }

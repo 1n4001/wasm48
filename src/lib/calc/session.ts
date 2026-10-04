@@ -812,12 +812,14 @@ type Serialized =
   | { t: "s"; v: number }
   | { t: "m"; r: number; c: number; d: number[] }
   | { t: "sym"; text: string }
-  | { t: "fn"; params: string[]; body: string };
+  | { t: "fn"; params: string[]; body: string }
+  | { t: "txt"; s: string };
 
 function dehydrate(v: Val): Serialized {
   if (v.t === "s") return { t: "s", v: v.v };
   if (v.t === "sym") return { t: "sym", text: v.text };
   if (v.t === "fn") return { t: "fn", params: v.params, body: v.body };
+  if (v.t === "txt") return { t: "txt", s: v.s };
   return { t: "m", r: v.r, c: v.c, d: [...v.d] };
 }
 
@@ -825,6 +827,7 @@ function hydrate(v: Serialized): Val {
   if (v.t === "s") return { t: "s", v: v.v };
   if (v.t === "sym") return { t: "sym", text: v.text };
   if (v.t === "fn") return { t: "fn", params: v.params, body: v.body };
+  if (v.t === "txt") return { t: "txt", s: v.s };
   return { t: "m", r: v.r, c: v.c, d: new Float64Array(v.d) };
 }
 

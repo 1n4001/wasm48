@@ -17,6 +17,7 @@ export function formatNum(n: number): string {
 export function formatVal(v: Val): string {
   if (v.t === "sym") return v.text;
   if (v.t === "fn") return v.body;
+  if (v.t === "txt") return quoteText(v.s);
   if (v.t === "s") return formatNum(v.v);
   const cells: string[][] = [];
   const width = Array.from({ length: v.c }, () => 0);
@@ -35,6 +36,7 @@ export function formatVal(v: Val): string {
 export function formatMath(v: Val): string {
   if (v.t === "sym") return v.text;
   if (v.t === "fn") return v.body;
+  if (v.t === "txt") return quoteText(v.s);
   if (v.t === "s") return formatNum(v.v);
   const parts: string[] = [];
   for (let i = 0; i < v.r; i++) {
@@ -46,7 +48,7 @@ export function formatMath(v: Val): string {
 }
 
 export function formatShort(v: Val): string {
-  if (v.t === "sym" || v.t === "fn") return v.t === "fn" ? v.body : v.text;
+  if (v.t === "sym" || v.t === "fn" || v.t === "txt") return v.t === "fn" ? v.body : v.t === "txt" ? quoteText(v.s) : v.text;
   if (v.t === "s") return formatNum(v.v);
   if (v.r * v.c > 6) return `[${v.r}×${v.c}]`;
   const parts: string[] = [];
@@ -56,6 +58,10 @@ export function formatShort(v: Val): string {
     parts.push(row.join(" "));
   }
   return `[${parts.join("; ")}]`;
+}
+
+export function quoteText(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`;
 }
 
 export function scriptForm(expr: string): string {
