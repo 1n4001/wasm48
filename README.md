@@ -1,5 +1,10 @@
 # WASM48
 
+[![pages](https://img.shields.io/github/actions/workflow/status/1n4001/wasm48/pages.yml?branch=main&label=pages)](https://github.com/1n4001/wasm48/actions/workflows/pages.yml)
+[![demo](https://img.shields.io/badge/demo-open%20calculator-2ea44f)](https://1n4001.github.io/wasm48/)
+[![license](https://img.shields.io/github/license/1n4001/wasm48)](LICENSE)
+[![node](https://img.shields.io/badge/node-22-339933?logo=nodedotjs&logoColor=white)](package.json)
+
 WASM48 is a browser calculator with an HP-48 style stack and a MATLAB-like command line. Formulas render as MathML. Numeric linear algebra runs in a small WebAssembly BLAS module.
 
 Try it at [1n4001.github.io/wasm48](https://1n4001.github.io/wasm48/).
