@@ -1,0 +1,58 @@
+name: Bug report
+description: The calculator gave the wrong result or the UI broke.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe one problem. Include the script you entered so someone else can run it.
+  - type: textarea
+    id: script
+    attributes:
+      label: Script
+      description: The lines you entered, in order.
+      placeholder: |
+        syms a v p
+        fp(t) = 1/2*a*t^2+v*t+p
+        a = 9.8
+        fp(t)
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What the stack showed
+      description: Copy the level text, or describe the screen if it did not update.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where you ran it
+      options:
+        - GitHub Pages (1n4001.github.io/wasm48)
+        - Local dev server
+        - Both
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      placeholder: Chrome 131 on macOS
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Console errors, screenshots, or a commit hash if you know it.
+    validations:
+      required: false
