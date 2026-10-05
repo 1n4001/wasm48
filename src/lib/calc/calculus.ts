@@ -500,6 +500,11 @@ function mulJoined(coeff: number, factors: Expr[]): Expr {
       } else if (factor.a.k === "num") {
         coeff = num((coeff * factor.a.v) / den);
         continue;
+      } else {
+        const inner = splitMul(factor.a);
+        coeff = num((coeff * inner.coeff) / den);
+        kept.push(...inner.factors);
+        continue;
       }
     }
     kept.push(factor);

@@ -1761,10 +1761,10 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
         }
         continue;
       }
-      if (hasSymbolic(expr, scope)) expr = inlineVals(expr, scope);
+      expr = inlineVals(expr, scope);
       const reduced = reduceCalculus(expr, scope);
       const folded = exprText(reduced) !== exprText(expr);
-      expr = reduced;
+      expr = inlineVals(reduced, scope);
       if (expr.k === "call" && isRadix(expr.name)) {
         const value = radixCall(expr.name, expr.args, scope, engine);
         if (stmt.assign) scope.set(stmt.assign, value);
