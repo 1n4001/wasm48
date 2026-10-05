@@ -1762,6 +1762,9 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
         continue;
       }
       if (hasSymbolic(expr, scope)) expr = inlineVals(expr, scope);
+      const reduced = reduceCalculus(expr, scope);
+      const folded = exprText(reduced) !== exprText(expr);
+      expr = reduced;
       if (expr.k === "call" && isRadix(expr.name)) {
         const value = radixCall(expr.name, expr.args, scope, engine);
         if (stmt.assign) scope.set(stmt.assign, value);
@@ -1789,7 +1792,7 @@ export function runScript(src: string, scope: Map<string, Val>, engine: Engine):
         }
         continue;
       }
-      if (hasSymbolic(expr, scope) || (user && hasFree(expr, scope))) {
+      if (hasSymbolic(expr, scope) || (user && hasFree(expr, scope)) || (folded && hasFree(expr, scope))) {
         const simple = simplify(expr);
         if (simple.k !== "num" && (hasSymbolic(simple, scope) || hasFree(simple, scope))) {
           const text = exprText(simple);
@@ -1972,6 +1975,53 @@ const FOLD_FN: Record<string, (x: number) => number> = {
   ceil: Math.ceil,
   round: Math.round,
 };
+
+function reduceCalculus(expr: Expr, scope: Map<string, Val>): Expr {
+  switch (expr.k) {
+    case "num":
+    case "name":
+    case "str":
+      return expr;
+    case "unary":
+      return { k: "unary", op: "-", a: reduceCalculus(expr.a, scope) };
+    case "trans":
+      return { k: "trans", a: reduceCalculus(expr.a, scope) };
+    case "bin":
+      return { k: "bin", op: expr.op, a: reduceCalculus(expr.a, scope), b: reduceCalculus(expr.b, scope) };
+    case "colon":
+      return {
+        k: "colon",
+        a: reduceCalculus(expr.a, scope),
+        step: expr.step ? reduceCalculus(expr.step, scope) : null,
+        b: reduceCalculus(expr.b, scope),
+      };
+    case "mat":
+      return { k: "mat", rows: expr.rows.map((row) => row.map((cell) => reduceCalculus(cell, scope))) };
+    case "call": {
+      const args = expr.args.map((arg) => reduceCalculus(arg, scope));
+      const id = expr.name.toLowerCase();
+      const variable = args[1];
+      if ((id === "integ" || id === "diff") && args.length === 2 && variable?.k === "name") {
+        let body = args[0]!;
+        if (body.k === "name") {
+          const fn = lookupFn(scope, body.s);
+          if (fn?.params.length === 1) {
+            const expanded = expandCalls(parseOne(fn.body), scope, new Set([body.s]));
+            body = reduceCalculus(substitute(expanded, fn.params[0]!, variable), scope);
+          }
+        }
+        try {
+          return id === "integ" ? antiderivative(body, variable.s) : derivative(body, variable.s);
+        } catch {
+          return { k: "call", name: expr.name, args, prime: expr.prime };
+        }
+      }
+      return { k: "call", name: expr.name, args, prime: expr.prime };
+    }
+    default:
+      return expr;
+  }
+}
 
 function calculusStmt(expr: Expr, scope: Map<string, Val>): { value?: Val; plot?: Plot } | null {
   if (expr.k !== "call") return null;

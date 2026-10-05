@@ -158,6 +158,17 @@ describe("rpn session", () => {
     const fp = session.stack.at(-1);
     assert.equal(fp?.t, "sym");
     if (fp?.t === "sym") assert.equal(fp.text, "1/2*a*t^2+v*t+p");
+    session.runSource("fa(t) = a");
+    session.runSource("fv(t) = integ(fa(t), t)+v");
+    session.runSource("fp(t) = integ(fv(t), t)+p");
+    session.runSource("fp(t)");
+    const motion = session.stack.at(-1);
+    assert.equal(motion?.t, "sym");
+    if (motion?.t === "sym") assert.equal(motion.text, "1/2*a*t^2+v*t+p");
+    session.runSource("fv(t)");
+    const speed = session.stack.at(-1);
+    assert.equal(speed?.t, "sym");
+    if (speed?.t === "sym") assert.equal(speed.text, "a*t+v");
     session.runSource("fv(t)");
     const fv = session.stack.at(-1);
     assert.equal(fv?.t, "sym");

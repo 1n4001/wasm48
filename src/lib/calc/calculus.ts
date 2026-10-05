@@ -436,6 +436,12 @@ function simpBin(op: string, a: Expr, b: Expr): Expr {
   }
   if ((op === "/" || op === "./") && bv === 1) return a;
   if ((op === "/" || op === "./") && av === 0 && bv !== 0) return { k: "num", v: 0 };
+  if ((op === "/" || op === "./") && bv !== null && Number.isInteger(bv) && Math.abs(bv) > 1) {
+    const parts = splitMul(a);
+    if (Number.isInteger(num(parts.coeff)) && parts.factors.length > 1) {
+      return simp(times(intQuotient(parts.coeff, bv), fromMul(1, parts.factors), "*"));
+    }
+  }
   if ((op === "/" || op === "./") && bv !== null && bv < 0) return simp(over(negNum(a), { k: "num", v: num(-bv) }));
   if (op === "^" || op === ".^") {
     if (bv === 0) return { k: "num", v: 1 };
@@ -471,6 +477,7 @@ function splitMul(e: Expr): { coeff: number; factors: Expr[] } {
 
 function mulJoined(coeff: number, factors: Expr[]): Expr {
   const kept: Expr[] = [];
+  let denOut = 1;
   for (const factor of factors) {
     if (factor.k === "bin" && (factor.op === "/" || factor.op === "./") && factor.b.k === "num" && factor.b.v !== 0) {
       const den = num(factor.b.v);
@@ -483,6 +490,13 @@ function mulJoined(coeff: number, factors: Expr[]): Expr {
           kept.push(...inner.factors);
           continue;
         }
+        if (factor.a.k !== "num") {
+          const inner = splitMul(factor.a);
+          coeff = num((coeff / g) * inner.coeff * (den < 0 ? -1 : 1));
+          denOut *= Math.abs(reduced);
+          kept.push(...inner.factors);
+          continue;
+        }
       } else if (factor.a.k === "num") {
         coeff = num((coeff * factor.a.v) / den);
         continue;
@@ -490,7 +504,10 @@ function mulJoined(coeff: number, factors: Expr[]): Expr {
     }
     kept.push(factor);
   }
-  return fromMul(num(coeff), kept);
+  if (denOut === 1) return fromMul(num(coeff), kept);
+  const lead = intQuotient(coeff, denOut);
+  if (lead.k === "num") return fromMul(lead.v, kept);
+  return kept.length ? fromMul(1, [lead, ...kept]) : lead;
 }
 
 function intQuotient(numer: number, den: number): Expr {
