@@ -223,6 +223,13 @@ describe("rpn session", () => {
     const parametric = session.stack.at(-1);
     assert.equal(parametric?.t, "sym");
     if (parametric?.t === "sym") assert.equal(parametric.text, "u = (a+1)/2\nw = (a-1)/2");
+    session.runSource("syms y m b");
+    session.runSource("solve(y=m*x+b, x)");
+    const forX = session.stack.at(-1);
+    assert.equal(forX?.t, "sym");
+    if (forX?.t === "sym") assert.equal(forX.text, "x = (y-b)/m");
+    const solvedX = session.face().vars.find((row) => row.id === "x");
+    assert.equal(solvedX?.text, "(y-b)/m");
   });
 
   it("multiplies matrices through the command line", () => {

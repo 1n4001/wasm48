@@ -747,7 +747,15 @@ function symbolicSolve(a: Expr[][], b: Expr[]): Expr[] {
       for (let c = col; c <= n; c++) m[row]![c] = simplify(minus(m[row]![c]!, times(factor, m[col]![c]!, "*")));
     }
   }
-  return m.map((row) => canonRational(simplify(row[n]!)));
+  return m.map((row) => preferPositiveDen(canonRational(simplify(row[n]!))));
+}
+
+function preferPositiveDen(e: Expr): Expr {
+  const s = simplify(e);
+  if (s.k !== "bin" || (s.op !== "/" && s.op !== "./")) return s;
+  const den = splitMul(s.b);
+  if (!(den.coeff < 0)) return s;
+  return simplify(over(neg(s.a), fromMul(num(-den.coeff), den.factors)));
 }
 
 function canonRational(e: Expr): Expr {

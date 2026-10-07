@@ -261,6 +261,11 @@ class Parser {
       while (this.peek().t === "sp") this.i++;
       return { k: "bin", op: "==", a, b: this.parseBor(matrix) };
     }
+    if (eq.t === "op" && eq.s === "=") {
+      this.i += 1;
+      while (this.peek().t === "sp") this.i++;
+      return { k: "bin", op: "==", a, b: this.parseBor(matrix) };
+    }
     if (!matrix && this.eat("op", ":")) {
       const mid = this.parseBor(matrix);
       if (this.eat("op", ":")) return { k: "colon", a, step: mid, b: this.parseBor(matrix) };
@@ -1507,7 +1512,12 @@ function expandCalls(expr: Expr, scope: Map<string, Val>, stack = new Set<string
     case "mat":
       return { k: "mat", rows: expr.rows.map((row) => row.map((cell) => expandCalls(cell, scope, stack))) };
     case "call": {
-      const args = expr.args.map((arg) => freezeArg(expandCalls(arg, scope, stack), scope));
+      const solving = expr.name.toLowerCase() === "solve";
+      const args = expr.args.map((arg) => {
+        const expanded = expandCalls(arg, scope, stack);
+        if (solving && (arg.k === "name" || arg.k === "mat")) return expanded;
+        return freezeArg(expanded, scope);
+      });
       const fn = lookupFn(scope, expr.name);
       if (!fn) {
         if (expr.prime) throw new MatlabError(`Undefined Function '${expr.name}'`);
@@ -1540,17 +1550,11 @@ function expandCalls(expr: Expr, scope: Map<string, Val>, stack = new Set<string
 }
 
 function solveCall(expr: Expr, scope: Map<string, Val>): { value: Val; label: string; bound: [string, Val][] } {
-  const listed = variableList(expr.args[expr.args.length - 1]);
-  const raw = listed ? expr.args.slice(0, -1) : expr.args;
-  const equations: Expr[] = [];
-  for (const arg of raw) {
-    if (arg.k === "mat") {
-      for (const row of arg.rows) for (const cell of row) equations.push(cell);
-    } else equations.push(arg);
-  }
-  const locked = new Set(listed ?? []);
-  const folded = equations.map((eq) => inlineVals(eq, scope, locked));
-  const vars = listed ?? inferUnknowns(folded, scope);
+  const split = splitSolve(expr.args);
+  if (!split.equations.length) throw new MatlabError("Too Few Arguments");
+  const locked = new Set(split.vars ?? []);
+  const folded = split.equations.map((eq) => inlineVals(eq, scope, locked));
+  const vars = split.vars ?? inferUnknowns(folded, scope);
   let values: Expr[];
   try {
     values = solveLinear(folded, vars);
@@ -1568,6 +1572,32 @@ function solveCall(expr: Expr, scope: Map<string, Val>): { value: Val; label: st
     return { value: matrix(vars.length, 1, data), label, bound };
   }
   return { value: { t: "sym", text: label }, label, bound };
+}
+
+function splitSolve(args: Expr[]): { equations: Expr[]; vars: string[] | null } {
+  if (!args.length) return { equations: [], vars: null };
+  const last = args[args.length - 1]!;
+  const listed = variableList(last);
+  if (listed) return { equations: flattenEqs(args.slice(0, -1)), vars: listed };
+  const vars: string[] = [];
+  let end = args.length;
+  while (end > 1 && args[end - 1]?.k === "name") {
+    const name = args[end - 1]!;
+    if (name.k === "name") vars.unshift(name.s);
+    end--;
+  }
+  if (vars.length) return { equations: flattenEqs(args.slice(0, end)), vars };
+  return { equations: flattenEqs(args), vars: null };
+}
+
+function flattenEqs(args: Expr[]): Expr[] {
+  const equations: Expr[] = [];
+  for (const arg of args) {
+    if (arg.k === "mat") {
+      for (const row of arg.rows) for (const cell of row) equations.push(cell);
+    } else equations.push(arg);
+  }
+  return equations;
 }
 
 function variableList(expr: Expr | undefined): string[] | null {

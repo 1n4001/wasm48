@@ -725,7 +725,7 @@ export const FUNCTIONS: FunctionRow[] = [
   { group: "Bits", name: "hex2bit", args: "s", about: "Hex digits to bits, 4 per digit.", example: "hex2bit('A')" },
   { group: "Bits", name: "bit2hex", args: "s", about: "Bit digits to hex.", example: "bit2hex('1111')" },
   { group: "Bits", name: "dec2dec", args: "s", about: "Decimal digits to a number.", example: "dec2dec('42')" },
-  { group: "Linear algebra", name: "solve", args: "eqs, vars", about: "Solve a square linear system. Equations use ==. A\\b solves a numeric matrix.", example: "solve(2*x+y==5, x-y==1, [x, y])" },
+  { group: "Linear algebra", name: "solve", args: "eqs, vars", about: "Solve a square linear system, or one equation for a named variable. = and == both mark an equation.", example: "solve(y=m*x+b, x)" },
   { group: "Linear algebra", name: "dot", args: "a, b", about: "Dot product.", example: "dot([1 2], [3 4])" },
   { group: "Linear algebra", name: "cross", args: "a, b", about: "Cross product of length-3 vectors.", example: "cross([1;0;0], [0;1;0])" },
   { group: "Linear algebra", name: "det", args: "A", about: "Determinant.", example: "det([1 2; 3 4])" },
