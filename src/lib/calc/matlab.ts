@@ -1517,6 +1517,8 @@ function expandCalls(expr: Expr, scope: Map<string, Val>, stack = new Set<string
       const next = new Set(stack);
       next.add(expr.name);
       let body = expandCalls(parseOne(fn.body), scope, next);
+      const locked = new Set(fn.params);
+      body = reduceCalculus(inlineVals(body, scope, locked), scope);
       if (expr.prime) {
         if (fn.params.length !== 1 || args.length !== 1) throw new MatlabError("Need one variable");
         try {
@@ -1524,9 +1526,9 @@ function expandCalls(expr: Expr, scope: Map<string, Val>, stack = new Set<string
         } catch (err) {
           throw new MatlabError(err instanceof Error ? err.message : "Cannot differentiate");
         }
-        return substitute(body, fn.params[0]!, args[0]!);
+      } else if (args.length !== fn.params.length) {
+        throw new MatlabError(args.length < fn.params.length ? "Too Few Arguments" : "Too Many Arguments");
       }
-      if (args.length !== fn.params.length) throw new MatlabError(args.length < fn.params.length ? "Too Few Arguments" : "Too Many Arguments");
       fn.params.forEach((param, index) => {
         body = substitute(body, param, args[index]!);
       });

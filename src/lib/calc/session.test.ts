@@ -184,6 +184,18 @@ describe("rpn session", () => {
     const pluggedP = session.stack.at(-1);
     assert.equal(pluggedP?.t, "sym");
     if (pluggedP?.t === "sym") assert.equal(pluggedP.text, "4.9*t^2+100");
+    session.runSource("fa(4)");
+    const faAt = session.stack.at(-1);
+    assert.equal(faAt?.t, "s");
+    if (faAt?.t === "s") assert.ok(Math.abs(faAt.v - 9.8) < 1e-9);
+    session.runSource("fv(4)");
+    const fvAt = session.stack.at(-1);
+    assert.equal(fvAt?.t, "s");
+    if (fvAt?.t === "s") assert.ok(Math.abs(fvAt.v - 39.2) < 1e-9);
+    session.runSource("fp(4)");
+    const fpAt = session.stack.at(-1);
+    assert.equal(fpAt?.t, "s");
+    if (fpAt?.t === "s") assert.ok(Math.abs(fpAt.v - 178.4) < 1e-9);
     session.runSource("a = 9.8");
     session.runSource("s'(t)");
     const plugged = session.stack.at(-1);
